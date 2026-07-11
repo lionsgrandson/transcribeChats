@@ -58,15 +58,19 @@ def detect_text_language(text: str, fallback: str = "auto") -> str:
     return fallback
 
 
-def _transcribe_sync(path: Path, language_mode: str) -> tuple[list[Segment], list[str], int | None]:
+def _transcribe_sync(path: Path, language_mode: str, context: str) -> tuple[list[Segment], list[str], int | None]:
     model = _get_model()
     language = language_mode if language_mode in {"en", "he"} else None
     mixed = language_mode in {"mixed", "auto"}
+    prompt_parts = ["עברית English. Speakers may switch naturally between Hebrew and English."] if mixed else []
+    clean_context = " ".join(context.split())[:1500]
+    if clean_context:
+        prompt_parts.append(f"Known names, spellings, terminology, and conversation context: {clean_context}. Use these spellings only when they match the audio.")
     raw_segments, info = model.transcribe(
         str(path), language=language, task="transcribe", beam_size=5, vad_filter=True,
         word_timestamps=True, multilingual=mixed, language_detection_segments=3,
         condition_on_previous_text=not mixed,
-        initial_prompt="עברית English. Speakers may switch naturally between Hebrew and English." if mixed else None,
+        initial_prompt=" ".join(prompt_parts) or None,
     )
     segments: list[Segment] = []
     for index, value in enumerate(raw_segments):
@@ -104,8 +108,8 @@ def _diarize_sync(path: Path, segments: list[Segment]) -> list[Segment]:
     return segments
 
 
-async def transcribe(path: Path, language_mode: str) -> tuple[list[Segment], list[str], int | None, bool]:
-    segments, languages, duration = await asyncio.to_thread(_transcribe_sync, path, language_mode)
+async def transcribe(path: Path, language_mode: str, context: str = "") -> tuple[list[Segment], list[str], int | None, bool]:
+    segments, languages, duration = await asyncio.to_thread(_transcribe_sync, path, language_mode, context)
     used_diarization = diarization_available()
     if used_diarization:
         segments = await asyncio.to_thread(_diarize_sync, path, segments)

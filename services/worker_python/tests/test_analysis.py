@@ -1,12 +1,39 @@
 import sys
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.analysis import analyze_rules  # noqa: E402
+from app.analysis import analyze, analyze_rules  # noqa: E402
 from app.schemas import Segment  # noqa: E402
+from app.settings import settings  # noqa: E402
+
+
+class FakeOllamaResponse:
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"message": {"content": '{"summary":"Useful summary","items":[]}'}, "done_reason": "stop"}
+
+
+class FakeOllamaClient:
+    payload = None
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return None
+
+    async def post(self, url, json):
+        FakeOllamaClient.payload = json
+        return FakeOllamaResponse()
 
 
 class AnalysisTests(unittest.TestCase):
@@ -36,6 +63,16 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(result.items[0].kind, "event")
         self.assertEqual(result.items[0].status, "needs_review")
         self.assertIsNone(result.items[0].startsAt)
+
+
+class OllamaAnalysisTests(unittest.IsolatedAsyncioTestCase):
+    async def test_disables_thinking_and_parses_structured_chat_output(self):
+        segments = [Segment(id="s1", sequence_no=0, start_ms=0, end_ms=1000, text="We decided to ship Friday.")]
+        with patch.object(settings, "ollama_url", "http://ollama"), patch("app.analysis.httpx.AsyncClient", FakeOllamaClient):
+            result = await analyze(segments, datetime(2026, 7, 11, tzinfo=timezone.utc), "People: Dana")
+        self.assertEqual(result.summary, "Useful summary")
+        self.assertFalse(FakeOllamaClient.payload["think"])
+        self.assertEqual(FakeOllamaClient.payload["messages"][0]["role"], "user")
 
 
 if __name__ == "__main__":

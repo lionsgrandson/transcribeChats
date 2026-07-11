@@ -1,10 +1,10 @@
-import { AlertTriangle, ArrowLeft, Bot, CalendarDays, Check, CheckCircle2, Clock, Download, Edit3, FileText, ListChecks, MessageSquareText, Play, Plus, RotateCcw, Save, Sparkles, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Bot, CalendarDays, Check, CheckCircle2, Clock, Download, Edit3, FileText, ListChecks, LoaderCircle, MessageSquareText, Play, Plus, RotateCcw, Save, Sparkles, Trash2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ChatGptModal } from '../components/ChatGptModal';
 import { Button, Card, EmptyState, ErrorState, Field, PageSkeleton, StatusBadge } from '../components/ui';
 import { db } from '../data/db';
-import type { ExtractedItem, Transcription, TranscriptSegment } from '../domain/types';
+import type { AnalysisResult, ExtractedItem, Transcription, TranscriptSegment } from '../domain/types';
 import { useTranslation } from '../i18n/useTranslation';
 import { formatDate, formatDuration, formatTimestamp, inferDirection } from '../lib/format';
 import { exportCsv, exportText, printPdf } from '../services/exports';
@@ -90,6 +90,8 @@ export function TranscriptionDetailPage() {
   const [note, setNote] = useState('');
   const [mediaUrl, setMediaUrl] = useState('');
   const [ollamaBusy, setOllamaBusy] = useState(false);
+  const [ollamaError, setOllamaError] = useState('');
+  const [ollamaResult, setOllamaResult] = useState<AnalysisResult>();
   const playerRef = useRef<HTMLAudioElement>(null);
   const tab = params.get('tab') || 'transcript';
   const sourceSegmentId = params.get('segment') || '';
@@ -122,9 +124,17 @@ export function TranscriptionDetailPage() {
     void player.play().catch(() => store.showToast('Playback could not start. Use the media controls and try again.'));
   };
   const analyzeWithOllama = async () => {
-    setOllamaBusy(true);
-    try { await store.runOllamaAnalysis(id); }
-    catch (reason) { store.showToast(reason instanceof Error ? reason.message : 'Ollama analysis failed.'); }
+    setOllamaBusy(true); setOllamaError(''); setOllamaResult(undefined);
+    try {
+      const result = await store.runOllamaAnalysis(id);
+      setOllamaResult(result);
+      setTab('summary');
+    }
+    catch (reason) {
+      const message = reason instanceof Error ? reason.message : 'Ollama analysis failed.';
+      setOllamaError(message);
+      store.showToast(message);
+    }
     finally { setOllamaBusy(false); }
   };
   const deleteRecord = async () => { if (confirm(t('deleteConfirm'))) { await store.deleteTranscription(id); navigate('/history'); } };
@@ -134,8 +144,12 @@ export function TranscriptionDetailPage() {
     <Link className="back-link" to="/history"><ArrowLeft size={16} />{t('back')} {t('history').toLowerCase()}</Link>
     <header className="detail-header">
       <div><div className="title-line"><h1 dir="auto">{transcription.title}</h1><StatusBadge status={transcription.status} /></div><div className="detail-meta"><span>{formatDate(transcription.recordedAt, 'MMM d, yyyy · HH:mm')}</span><span>{formatDuration(transcription.durationMs)}</span><span>{transcription.detectedLanguages.join(' + ') || transcription.languageMode}</span><span>{transcription.synced ? t('synced') : t('savedLocally')}</span></div></div>
-      <div className="header-actions"><Button variant="secondary" onClick={() => setChatOpen(true)}><Sparkles size={17} />{t('openInChatGPT')}</Button><Button variant="secondary" busy={ollamaBusy} disabled={!segments.length} onClick={() => void analyzeWithOllama()}><Bot size={17} />Send to Ollama</Button><div className="menu-wrap"><Button variant="secondary" onClick={() => setExportOpen((value) => !value)}><Download size={17} />{t('export')}</Button>{exportOpen && <div className="action-menu"><button onClick={() => { exportText(transcription, segments, items); setExportOpen(false); }}>{t('exportText')}</button><button onClick={() => { exportCsv(transcription, items); setExportOpen(false); }}>{t('exportCsv')}</button><button onClick={() => { printPdf(transcription, segments, items); setExportOpen(false); }}>{t('exportPdf')}</button></div>}</div><button className="icon-button" title={t('delete')} onClick={() => void deleteRecord()}><Trash2 /></button></div>
+      <div className="header-actions"><Button variant="secondary" onClick={() => setChatOpen(true)}><Sparkles size={17} />{t('openInChatGPT')}</Button><Button variant="secondary" busy={ollamaBusy} disabled={!segments.length} onClick={() => void analyzeWithOllama()}><Bot size={17} />{ollamaBusy ? 'Analyzing with Ollama…' : 'Analyze with Ollama'}</Button><div className="menu-wrap"><Button variant="secondary" onClick={() => setExportOpen((value) => !value)}><Download size={17} />{t('export')}</Button>{exportOpen && <div className="action-menu"><button onClick={() => { exportText(transcription, segments, items); setExportOpen(false); }}>{t('exportText')}</button><button onClick={() => { exportCsv(transcription, items); setExportOpen(false); }}>{t('exportCsv')}</button><button onClick={() => { printPdf(transcription, segments, items); setExportOpen(false); }}>{t('exportPdf')}</button></div>}</div><button className="icon-button" title={t('delete')} onClick={() => void deleteRecord()}><Trash2 /></button></div>
     </header>
+
+    {ollamaBusy && <div className="banner banner-neutral ollama-banner" role="status"><LoaderCircle className="spin" /><div><strong>Ollama is analyzing the full transcript</strong><span>Creating the summary, explicit tasks, meeting events, important notes, and dated timeline. Large transcripts can take a few minutes.</span></div></div>}
+    {ollamaError && <div className="banner banner-error ollama-banner" role="alert"><AlertTriangle /><div><strong>Ollama analysis failed</strong><span>{ollamaError}</span></div><Button variant="secondary" onClick={() => void analyzeWithOllama()}><RotateCcw size={15} />Retry</Button></div>}
+    {ollamaResult && !ollamaBusy && <div className="banner banner-success ollama-banner" role="status"><CheckCircle2 /><div><strong>Ollama analysis is ready</strong><span>{ollamaResult.items.filter((item) => item.kind === 'task').length} tasks · {ollamaResult.items.filter((item) => item.kind === 'event').length} events · {ollamaResult.items.filter((item) => item.kind === 'note' || item.kind === 'takeaway').length} notes/takeaways. Review items before accepting them.</span></div><div className="ollama-result-actions"><Button variant="secondary" onClick={() => setTab('summary')}>Summary</Button><Button variant="secondary" onClick={() => setTab('tasks')}>Tasks & events</Button><Button variant="secondary" onClick={() => setTab('timeline')}>Timeline</Button></div></div>}
 
     {transcription.status === 'processing' || transcription.status === 'queued' ? <ProcessingStatus transcription={transcription} /> : null}
     {transcription.status === 'failed' && <div className="banner banner-error"><AlertTriangle /><div><strong>{t('failed')}</strong><span>{transcription.error || t('workerUnavailable')}</span></div><Button variant="secondary" onClick={() => void store.retryTranscription(id)}><RotateCcw size={16} />{t('retry')}</Button></div>}

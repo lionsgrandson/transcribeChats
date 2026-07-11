@@ -4,13 +4,15 @@ TranscribeChats is an installable cross-platform PWA for bilingual Hebrew/Englis
 
 Project status: functional MVP implementation.
 
-Application version: `0.4.0`
+Application version: `0.5.0`
 
 Last updated: 2026-07-11
 
 ## Start here
 
 The complete product, architecture, database, API, UX, testing, and delivery plan is in [docs/IMPLEMENTATION_SPECIFICATION.md](docs/IMPLEMENTATION_SPECIFICATION.md).
+
+For hosted/local synchronization, authentication, migrations, storage, and every environment variable, follow [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md).
 
 ## Implemented stack
 
@@ -315,4 +317,4 @@ Once application scaffolding creates `package.json` and `package-lock.json`, eve
 - Minor: backward-compatible features.
 - Major: breaking schema, API, sync, or user-workflow changes.
 
-The current `package.json` and `package-lock.json` both track application version `0.4.0`.
+The current `package.json` and `package-lock.json` both track application version `0.5.0`.

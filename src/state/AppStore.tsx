@@ -44,7 +44,7 @@ interface AppStoreValue {
   addNote: (transcriptionId: string, body: string) => Promise<void>;
   deleteTranscription: (id: string) => Promise<void>;
   runAnalysis: (id: string) => Promise<void>;
-  runOllamaAnalysis: (id: string) => Promise<void>;
+  runOllamaAnalysis: (id: string) => Promise<AnalysisResult>;
   loadDemo: () => Promise<void>;
   clearData: () => Promise<void>;
   sync: () => Promise<void>;
@@ -140,7 +140,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     const created = makeItems(transcriptionId, analysis);
     await db.transaction('rw', db.transcriptions, db.items, async () => {
       await db.transcriptions.update(transcriptionId, { summary: analysis.summary, updatedAt: new Date().toISOString() });
-      const replaceable = await db.items.where('transcriptionId').equals(transcriptionId).filter((item) => !item.confirmed && item.status === 'needs_review').primaryKeys();
+      const replaceable = await db.items.where('transcriptionId').equals(transcriptionId).filter((item) => !item.confirmed).primaryKeys();
       if (replaceable.length) await db.items.bulkDelete(replaceable);
       if (created.length) await db.items.bulkAdd(created);
     });
@@ -334,6 +334,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     await persistAnalysis(id, result);
     await reload();
     showToast('Ollama analysis completed. Review suggestions before accepting them.');
+    return result;
   }, [persistAnalysis, reload, settings.workerUrl, showToast]);
   const loadDemo = useCallback(async () => {
     await db.transaction('rw', db.transcriptions, db.segments, db.items, async () => {

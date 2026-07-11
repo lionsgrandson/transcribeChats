@@ -57,23 +57,60 @@ def analyze_rules(segments: list[Segment], conversation_date: datetime) -> Analy
 async def analyze(segments: list[Segment], conversation_date: datetime, context: str) -> Analysis:
     if not settings.ollama_url:
         raise RuntimeError("Ollama is not configured for the transcription worker.")
-    transcript = "\n".join(f"[{segment.start_ms}] {segment.speaker_label}: {segment.text}" for segment in segments)
-    prompt = f"""Analyze this Hebrew/English transcript. Return JSON matching the supplied schema.
+    transcript = "\n".join(
+        f'<segment id="{segment.id or ""}" start_ms="{segment.start_ms}" speaker="{segment.speaker_label}">{segment.text}</segment>'
+        for segment in segments
+    )
+    schema = Analysis.model_json_schema()
+    prompt = f"""Analyze this Hebrew/English transcript and produce the complete workspace output.
 
 Rules:
 - A task is allowed only when a speaker explicitly commits a person to a concrete action, e.g. "Dana will send the file" or "please call Amir".
 - Do not convert advice, predictions, opinions, descriptions, or phrases like "you need to understand" into tasks.
 - An event is allowed only for an explicit proposal to schedule/have a meeting, call, or appointment. Ordinary mentions of meetings are not events.
 - Preserve a meeting proposal without a date as needs_review with startsAt null. Never invent a date or time.
-- Every task/event must be needs_review and confirmed=false. Preserve source segment IDs.
-- Return a concise summary even when there are no actionable items.
+- Every task/event must be needs_review and confirmed=false.
+- Every extracted item must include sourceSegmentIds using only the exact segment `id` values shown in the transcript.
+- Extract important factual notes and explicit decisions as note/takeaway items. Do not turn them into tasks.
+- Return a useful concise summary even when there are no actionable items.
+- Dated tasks and events create the timeline. Never invent dates.
+- Use participant names and domain terms from Context only when supported by the transcript.
+- Output only JSON matching this schema: {json.dumps(schema, ensure_ascii=False)}
 
 Conversation date: {conversation_date.isoformat()}
 Context: {context}
 Transcript:\n{transcript}"""
-    schema = Analysis.model_json_schema()
-    async with httpx.AsyncClient(timeout=600) as client:
-        response = await client.post(f"{settings.ollama_url.rstrip('/')}/api/generate", json={"model": settings.ollama_model, "prompt": prompt, "format": schema, "stream": False, "keep_alive": 0, "options": {"temperature": 0}})
+    async with httpx.AsyncClient(timeout=900) as client:
+        response = await client.post(f"{settings.ollama_url.rstrip('/')}/api/chat", json={
+            "model": settings.ollama_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "format": schema,
+            "stream": False,
+            "think": False,
+            "keep_alive": 0,
+            "options": {"temperature": 0},
+        })
         response.raise_for_status()
-        content = response.json().get("response", "{}")
-        return Analysis.model_validate(json.loads(content))
+        payload = response.json()
+        content = payload.get("message", {}).get("content", "").strip()
+        if not content:
+            raise RuntimeError(f"Ollama returned no final analysis (reason: {payload.get('done_reason', 'unknown')}).")
+        result = Analysis.model_validate_json(content)
+        valid_sources = {segment.id for segment in segments if segment.id}
+        for item in result.items:
+            item.sourceSegmentIds = [source for source in item.sourceSegmentIds if source in valid_sources]
+            item.confirmed = False
+            if item.kind in {"task", "event"}:
+                item.status = "needs_review"
+            else:
+                item.status = "open"
+            if item.kind == "task":
+                item.startsAt = None
+                item.endsAt = None
+            if item.kind == "event":
+                item.dueAt = None
+            if item.kind == "event" and not item.startsAt and not item.uncertaintyReason:
+                item.uncertaintyReason = "Add a date and time before accepting this event into the calendar."
+        if not result.summary.strip():
+            result.summary = " ".join(segment.text.strip() for segment in segments[:4])[:800]
+        return result
