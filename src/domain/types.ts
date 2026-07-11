@@ -27,6 +27,7 @@ export interface Transcription {
   summary?: string;
   progress?: number;
   stage?: string;
+  jobId?: string;
   error?: string;
   synced?: boolean;
 }

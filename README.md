@@ -4,7 +4,7 @@ TranscribeChats is an installable cross-platform PWA for bilingual Hebrew/Englis
 
 Project status: functional MVP implementation.
 
-Application version: `0.2.2`
+Application version: `0.2.4`
 
 Last updated: 2026-07-11
 
@@ -45,6 +45,14 @@ npm.cmd run dev
 If the page is blank after the development server was restarted, open `http://localhost:4173` rather than switching between `localhost` and `127.0.0.1`, then press `Ctrl+Shift+R` once. Version 0.2.2 also displays a recovery screen instead of remaining blank when a page module is stale.
 
 The application works without the worker for manual text, task/event extraction, offline history, exports, and the demo workspace. Recording and uploaded media remain safely stored in IndexedDB when the worker is unavailable and can be retried later.
+
+### Transcription time and progress
+
+Media file size is not a reliable estimate of transcription time; recording duration and processor speed matter much more. For example, a 27 MB video can contain roughly 30 minutes of audio. The default accurate `small` Whisper model may need several minutes on a CPU, and high CPU usage during that time is expected.
+
+While the local engine runs, the progress percentage between upload and finalization is explicitly marked as an estimate and the app shows elapsed time. Ollama does not perform speech-to-text; it is only used for optional summary and task analysis after Whisper has produced the transcript.
+
+Starting with version 0.2.4, new media uploads use resumable background jobs. The app saves the worker job ID locally and reconnects to it after a page refresh, so Docker can continue transcribing independently. If Docker itself restarts, the locally saved media remains available and the app presents a Retry action.
 
 ## Mobile Setup
 
@@ -288,4 +296,4 @@ Once application scaffolding creates `package.json` and `package-lock.json`, eve
 - Minor: backward-compatible features.
 - Major: breaking schema, API, sync, or user-workflow changes.
 
-The current `package.json` and `package-lock.json` both track application version `0.2.2`.
+The current `package.json` and `package-lock.json` both track application version `0.2.4`.

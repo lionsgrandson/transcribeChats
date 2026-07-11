@@ -11,7 +11,7 @@ vite.config.d.ts
 .idea/
 .vscode/
 services/worker_python/.venv/
-services/worker_python/__pycache__/
+**/__pycache__/
 services/worker_python/.models/
 services/worker_python/.cache/
 supabase/.temp/

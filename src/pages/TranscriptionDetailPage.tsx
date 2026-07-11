@@ -1,9 +1,9 @@
 import { AlertTriangle, ArrowLeft, CalendarDays, Check, CheckCircle2, Clock, Download, Edit3, FileText, ListChecks, MessageSquareText, Play, Plus, RotateCcw, Sparkles, Trash2, X } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ChatGptModal } from '../components/ChatGptModal';
 import { Button, Card, EmptyState, ErrorState, Field, PageSkeleton, StatusBadge } from '../components/ui';
-import type { ExtractedItem, TranscriptSegment } from '../domain/types';
+import type { ExtractedItem, Transcription, TranscriptSegment } from '../domain/types';
 import { useTranslation } from '../i18n/useTranslation';
 import { formatDate, formatDuration, formatTimestamp, inferDirection } from '../lib/format';
 import { exportCsv, exportText, printPdf } from '../services/exports';
@@ -34,6 +34,40 @@ function ItemRow({ item, onUpdate }: { item: ExtractedItem; onUpdate: (patch: Pa
   </div>;
 }
 
+function ProcessingStatus({ transcription }: { transcription: Transcription }) {
+  const { t, locale } = useTranslation();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 5_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const storedProgress = transcription.progress || 0;
+  const elapsedMs = Math.max(0, now - new Date(transcription.updatedAt).getTime());
+  const waitingForWorker = transcription.status === 'processing' && storedProgress >= 12 && storedProgress < 85;
+  const displayProgress = waitingForWorker ? Math.min(82, Math.max(storedProgress, 18 + Math.floor(elapsedMs / 15_000))) : storedProgress;
+  const elapsedMinutes = Math.floor(elapsedMs / 60_000);
+  const elapsedSeconds = Math.floor((elapsedMs % 60_000) / 1_000);
+  const elapsedLabel = elapsedMinutes ? `${elapsedMinutes}m ${elapsedSeconds.toString().padStart(2, '0')}s` : `${elapsedSeconds}s`;
+  const stage = waitingForWorker
+    ? locale === 'he' ? 'תמלול מקומי באמצעות Whisper' : 'Transcribing locally with Whisper'
+    : transcription.stage || t('preparation');
+  const detail = locale === 'he'
+    ? `זמן שחלף: ${elapsedLabel} · האחוז הוא הערכה בזמן שהמנוע המקומי עובד. אפשר לצאת מהעמוד; יש להשאיר את Docker פועל.`
+    : `Elapsed ${elapsedLabel} · progress is estimated while the local engine works. You may leave this page; keep Docker running.`;
+  const progressLabel = locale === 'he' ? `כ־${displayProgress}%` : `about ${displayProgress}%`;
+
+  return <Card className="processing-card">
+    <div className="processing-orbit"><Sparkles /></div>
+    <div>
+      <h2>{t('processing')}</h2>
+      <p>{stage} · {progressLabel}</p>
+      <div className={`progress-track ${waitingForWorker ? 'progress-estimated' : ''}`} aria-label={`${stage}, about ${displayProgress}%`}><span style={{ width: `${displayProgress}%` }} /></div>
+      <small>{detail}</small>
+    </div>
+  </Card>;
+}
+
 export function TranscriptionDetailPage() {
   const { id = '' } = useParams();
   const [params, setParams] = useSearchParams();
@@ -61,7 +95,7 @@ export function TranscriptionDetailPage() {
       <div className="header-actions"><Button variant="secondary" onClick={() => setChatOpen(true)}><Sparkles size={17} />{t('openInChatGPT')}</Button><div className="menu-wrap"><Button variant="secondary" onClick={() => setExportOpen((value) => !value)}><Download size={17} />{t('export')}</Button>{exportOpen && <div className="action-menu"><button onClick={() => { exportText(transcription, segments, items); setExportOpen(false); }}>{t('exportText')}</button><button onClick={() => { exportCsv(transcription, items); setExportOpen(false); }}>{t('exportCsv')}</button><button onClick={() => { printPdf(transcription, segments, items); setExportOpen(false); }}>{t('exportPdf')}</button></div>}</div><button className="icon-button" title={t('delete')} onClick={() => void deleteRecord()}><Trash2 /></button></div>
     </header>
 
-    {transcription.status === 'processing' || transcription.status === 'queued' ? <Card className="processing-card"><div className="processing-orbit"><Sparkles /></div><div><h2>{t('processing')}</h2><p>{transcription.stage || t('preparation')} · {transcription.progress || 0}%</p><div className="progress-track"><span style={{ width: `${transcription.progress || 0}%` }} /></div><small>{t('safeToClose')}</small></div></Card> : null}
+    {transcription.status === 'processing' || transcription.status === 'queued' ? <ProcessingStatus transcription={transcription} /> : null}
     {transcription.status === 'failed' && <div className="banner banner-error"><AlertTriangle /><div><strong>{t('failed')}</strong><span>{transcription.error || t('workerUnavailable')}</span></div><Button variant="secondary" onClick={() => void store.retryTranscription(id)}><RotateCcw size={16} />{t('retry')}</Button></div>}
 
     <div className="detail-tabs" role="tablist">{tabs.map(({ id: value, label, icon: Icon }) => <button key={value} className={tab === value ? 'active' : ''} onClick={() => setTab(value)}><Icon size={17} />{label}{value === 'tasks' && items.filter((item) => item.status === 'needs_review').length > 0 && <span className="tab-count">{items.filter((item) => item.status === 'needs_review').length}</span>}</button>)}</div>

@@ -12,6 +12,15 @@ const workerResponseSchema = z.object({
   analysis: z.object({ summary: z.string().default(''), items: z.array(z.record(z.string(), z.unknown())).default([]) }).optional()
 });
 
+const jobStatusSchema = z.object({
+  job_id: z.string(),
+  status: z.enum(['queued', 'processing', 'ready', 'failed']),
+  progress: z.number().min(0).max(100),
+  stage: z.string(),
+  result: workerResponseSchema.nullish(),
+  error: z.string().nullish()
+});
+
 export interface WorkerResult {
   durationMs?: number;
   detectedLanguages: string[];
@@ -26,22 +35,55 @@ export async function transcribeWithWorker(
   languageMode: LanguageMode,
   context: string,
   recordedAt: string,
-  onProgress: (progress: number, stage: string) => void
+  onProgress: (progress: number, stage: string) => void | Promise<void>,
+  onJobCreated: (jobId: string) => void | Promise<void>,
+  existingJobId?: string
 ): Promise<WorkerResult> {
-  const form = new FormData();
-  form.append('file', file, filename);
-  form.append('language_mode', languageMode);
-  form.append('context', context);
-  form.append('recorded_at', recordedAt);
-  form.append('analyze', 'true');
-  onProgress(15, 'Uploading');
-  const response = await fetch(`${workerUrl.replace(/\/$/, '')}/v1/transcribe`, { method: 'POST', body: form });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Worker returned ${response.status}`);
+  const baseUrl = workerUrl.replace(/\/$/, '');
+  let jobId = existingJobId;
+  if (!jobId) {
+    const form = new FormData();
+    form.append('file', file, filename);
+    form.append('language_mode', languageMode);
+    form.append('context', context);
+    form.append('recorded_at', recordedAt);
+    form.append('analyze', 'true');
+    await onProgress(12, 'Uploading to transcription engine');
+    const response = await fetch(`${baseUrl}/v1/jobs`, { method: 'POST', body: form });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `Worker returned ${response.status}`);
+    }
+    const accepted = jobStatusSchema.parse(await response.json());
+    jobId = accepted.job_id;
+    await onJobCreated(jobId);
+    await onProgress(accepted.progress, accepted.stage);
   }
-  onProgress(85, 'Finalizing');
-  const parsed = workerResponseSchema.parse(await response.json());
+
+  let lastProgress = -1;
+  let lastStage = '';
+  let parsed: z.infer<typeof workerResponseSchema> | undefined;
+  while (!parsed) {
+    const response = await fetch(`${baseUrl}/v1/jobs/${jobId}`, { cache: 'no-store' });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `Worker returned ${response.status}`);
+    }
+    const job = jobStatusSchema.parse(await response.json());
+    if (job.progress !== lastProgress || job.stage !== lastStage) {
+      lastProgress = job.progress;
+      lastStage = job.stage;
+      await onProgress(job.progress, job.stage);
+    }
+    if (job.status === 'failed') throw new Error(job.error || 'Transcription failed.');
+    if (job.status === 'ready') {
+      if (!job.result) throw new Error('The transcription job completed without a result.');
+      parsed = job.result;
+      break;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+  }
+
   return {
     durationMs: parsed.duration_ms,
     detectedLanguages: parsed.detected_languages,

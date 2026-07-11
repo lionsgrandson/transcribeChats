@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { db, defaultSettings } from '../data/db';
 import { demoItems, demoSegments, demoTranscription } from '../data/demo';
 import type {
@@ -67,6 +67,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ExtractedItem[]>([]);
   const [notes, setNotes] = useState<TranscriptionNote[]>([]);
   const [toast, setToast] = useState<string>();
+  const activeProcessingIds = useRef(new Set<string>());
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -169,13 +170,22 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, [reload, showToast]);
 
   const processExistingMedia = useCallback(async (transcription: Transcription, media: LocalMediaAsset) => {
+    if (activeProcessingIds.current.has(transcription.id)) return;
+    activeProcessingIds.current.add(transcription.id);
     try {
-      await db.transcriptions.update(transcription.id, { status: 'processing', progress: 10, stage: 'Preparing', error: undefined, updatedAt: new Date().toISOString() });
+      await db.transcriptions.update(transcription.id, {
+        status: 'processing', progress: transcription.jobId ? transcription.progress || 15 : 10,
+        stage: transcription.jobId ? 'Reconnecting to transcription job' : 'Preparing',
+        error: undefined, updatedAt: new Date().toISOString()
+      });
       await reload();
       const result = await transcribeWithWorker(settings.workerUrl, media.blob, media.filename, transcription.languageMode, transcription.context || '', transcription.recordedAt, async (progress, stage) => {
         await db.transcriptions.update(transcription.id, { progress, stage, updatedAt: new Date().toISOString() });
         setTranscriptions((current) => current.map((value) => value.id === transcription.id ? { ...value, progress, stage } : value));
-      });
+      }, async (jobId) => {
+        await db.transcriptions.update(transcription.id, { jobId, status: 'processing', updatedAt: new Date().toISOString() });
+        setTranscriptions((current) => current.map((value) => value.id === transcription.id ? { ...value, jobId, status: 'processing' } : value));
+      }, transcription.jobId);
       const createdSegments = result.segments.map((segment) => ({ ...segment, transcriptionId: transcription.id }));
       await db.transaction('rw', db.transcriptions, db.segments, async () => {
         await db.segments.where('transcriptionId').equals(transcription.id).delete();
@@ -194,6 +204,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       await db.transcriptions.update(transcription.id, { status: 'failed', progress: 0, stage: 'Failed', error: message, updatedAt: new Date().toISOString() });
       await reload();
       showToast('Transcription failed. The recording is still saved locally.');
+    } finally {
+      activeProcessingIds.current.delete(transcription.id);
     }
   }, [persistAnalysis, reload, settings.workerUrl, showToast]);
 
@@ -215,8 +227,34 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     const transcription = await db.transcriptions.get(id);
     const media = await db.media.where('transcriptionId').equals(id).first();
     if (!transcription || !media) throw new Error('The local media file is missing.');
-    await processExistingMedia(transcription, media);
+    await db.transcriptions.update(id, { jobId: undefined, progress: 0, stage: 'Queued', error: undefined, updatedAt: new Date().toISOString() });
+    await processExistingMedia({ ...transcription, jobId: undefined, progress: 0, stage: 'Queued', error: undefined }, media);
   }, [processExistingMedia]);
+
+  useEffect(() => {
+    if (loading) return;
+    for (const transcription of transcriptions.filter((value) => value.status === 'processing' || value.status === 'queued')) {
+      if (activeProcessingIds.current.has(transcription.id)) continue;
+      void (async () => {
+        const media = await db.media.where('transcriptionId').equals(transcription.id).first();
+        if (!media) {
+          await db.transcriptions.update(transcription.id, { status: 'failed', progress: 0, stage: 'Failed', error: 'The locally saved media file is missing.', updatedAt: new Date().toISOString() });
+          await reload();
+          return;
+        }
+        if (transcription.jobId) {
+          await processExistingMedia(transcription, media);
+          return;
+        }
+        await db.transcriptions.update(transcription.id, {
+          status: 'failed', progress: 0, stage: 'Interrupted',
+          error: 'The previous browser request ended before a resumable job was created. Retry to use the new background job flow.',
+          updatedAt: new Date().toISOString()
+        });
+        await reload();
+      })();
+    }
+  }, [loading, processExistingMedia, reload, transcriptions]);
 
   const updateTranscription = useCallback(async (id: string, patch: Partial<Transcription>) => {
     await db.transcriptions.update(id, { ...patch, updatedAt: new Date().toISOString(), synced: false });

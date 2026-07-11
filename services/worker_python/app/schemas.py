@@ -47,6 +47,15 @@ class TranscriptionResponse(BaseModel):
     diarization_enabled: bool
 
 
+class TranscriptionJobStatus(BaseModel):
+    job_id: str
+    status: Literal["queued", "processing", "ready", "failed"]
+    progress: int = Field(ge=0, le=100)
+    stage: str
+    result: TranscriptionResponse | None = None
+    error: str | None = None
+
+
 class HealthResponse(BaseModel):
     status: Literal["ready", "live"]
     model_loaded: bool
