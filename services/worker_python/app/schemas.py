@@ -37,6 +37,12 @@ class Analysis(BaseModel):
     items: list[AnalysisItem] = Field(default_factory=list)
 
 
+class AnalysisRequest(BaseModel):
+    segments: list[Segment]
+    recorded_at: str | None = None
+    context: str = ""
+
+
 class TranscriptionResponse(BaseModel):
     duration_ms: int | None = None
     detected_languages: list[str]

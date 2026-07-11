@@ -24,6 +24,19 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(result.items[0].kind, "task")
         self.assertIn("2026-07-12", result.items[0].dueAt)
 
+    def test_does_not_turn_advice_into_a_task(self):
+        segments = [Segment(id="s3", sequence_no=0, start_ms=0, end_ms=1000, text="You need to understand yourself and you will enjoy it.")]
+        result = analyze_rules(segments, datetime(2026, 7, 11, tzinfo=timezone.utc))
+        self.assertEqual(result.items, [])
+
+    def test_meeting_without_date_requires_review(self):
+        segments = [Segment(id="s4", sequence_no=0, start_ms=0, end_ms=1000, text="Let's have a meeting about the launch.")]
+        result = analyze_rules(segments, datetime(2026, 7, 11, tzinfo=timezone.utc))
+        self.assertEqual(len(result.items), 1)
+        self.assertEqual(result.items[0].kind, "event")
+        self.assertEqual(result.items[0].status, "needs_review")
+        self.assertIsNone(result.items[0].startsAt)
+
 
 if __name__ == "__main__":
     unittest.main()

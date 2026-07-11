@@ -7,8 +7,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     asr_model: str = "small"
-    asr_device: str = "cpu"
-    asr_compute_type: str = "int8"
+    asr_device: str = "cuda"
+    asr_compute_type: str = "float16"
     media_temp_dir: Path = Path("/tmp/transcribe-chats")
     model_cache_dir: Path = Path("/models")
     max_upload_bytes: int = 2_147_483_648
@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     pyannote_model: str = "pyannote/speaker-diarization-community-1"
     pyannote_metrics_enabled: bool = False
     ollama_url: str | None = None
-    ollama_model: str = "qwen3:4b"
+    ollama_model: str = "qwen3.5:9b"
 
     @property
     def origins(self) -> list[str]:

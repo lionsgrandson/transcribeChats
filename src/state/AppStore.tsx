@@ -14,7 +14,7 @@ import type {
 } from '../domain/types';
 import { createId } from '../lib/id';
 import { analyzeText } from '../services/analysis';
-import { checkWorker, transcribeWithWorker } from '../services/worker';
+import { analyzeWithOllama, checkWorker, transcribeWithWorker } from '../services/worker';
 
 interface AppStoreValue {
   loading: boolean;
@@ -37,11 +37,14 @@ interface AppStoreValue {
   updateTranscription: (id: string, patch: Partial<Transcription>) => Promise<void>;
   updateSegment: (id: string, text: string, speakerLabel?: string) => Promise<void>;
   updateItem: (id: string, patch: Partial<ExtractedItem>) => Promise<void>;
+  deleteItem: (id: string) => Promise<void>;
+  deleteItems: (ids: string[]) => Promise<void>;
   addItem: (transcriptionId: string, item: Partial<ExtractedItem> & Pick<ExtractedItem, 'kind' | 'title'>) => Promise<void>;
   importItems: (transcriptionId: string, values: AnalysisResult['items']) => Promise<void>;
   addNote: (transcriptionId: string, body: string) => Promise<void>;
   deleteTranscription: (id: string) => Promise<void>;
   runAnalysis: (id: string) => Promise<void>;
+  runOllamaAnalysis: (id: string) => Promise<void>;
   loadDemo: () => Promise<void>;
   clearData: () => Promise<void>;
   sync: () => Promise<void>;
@@ -137,6 +140,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     const created = makeItems(transcriptionId, analysis);
     await db.transaction('rw', db.transcriptions, db.items, async () => {
       await db.transcriptions.update(transcriptionId, { summary: analysis.summary, updatedAt: new Date().toISOString() });
+      const replaceable = await db.items.where('transcriptionId').equals(transcriptionId).filter((item) => !item.confirmed && item.status === 'needs_review').primaryKeys();
+      if (replaceable.length) await db.items.bulkDelete(replaceable);
       if (created.length) await db.items.bulkAdd(created);
     });
     return created;
@@ -268,6 +273,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     await db.items.update(id, { ...patch, updatedAt: new Date().toISOString() });
     await reload();
   }, [reload]);
+  const deleteItem = useCallback(async (id: string) => {
+    await db.items.delete(id);
+    await reload();
+    showToast('Item deleted.');
+  }, [reload, showToast]);
+  const deleteItems = useCallback(async (ids: string[]) => {
+    if (!ids.length) return;
+    await db.items.bulkDelete(ids);
+    await reload();
+    showToast(`${ids.length} items deleted.`);
+  }, [reload, showToast]);
   const addItem = useCallback(async (transcriptionId: string, item: Partial<ExtractedItem> & Pick<ExtractedItem, 'kind' | 'title'>) => {
     const now = new Date().toISOString();
     await db.items.add({
@@ -310,6 +326,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     await reload();
     showToast('Analysis completed.');
   }, [persistAnalysis, reload, showToast]);
+  const runOllamaAnalysis = useCallback(async (id: string) => {
+    const transcription = await db.transcriptions.get(id);
+    const values = await db.segments.where('transcriptionId').equals(id).sortBy('sequenceNo');
+    if (!transcription || !values.length) throw new Error('A transcript is required before Ollama analysis.');
+    const result = await analyzeWithOllama(settings.workerUrl, values, transcription.recordedAt, transcription.context || '');
+    await persistAnalysis(id, result);
+    await reload();
+    showToast('Ollama analysis completed. Review suggestions before accepting them.');
+  }, [persistAnalysis, reload, settings.workerUrl, showToast]);
   const loadDemo = useCallback(async () => {
     await db.transaction('rw', db.transcriptions, db.segments, db.items, async () => {
       await db.transcriptions.put(demoTranscription); await db.segments.bulkPut(demoSegments); await db.items.bulkPut(demoItems);
@@ -349,12 +374,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AppStoreValue>(() => ({
     loading, error, online, workerReady, settings, transcriptions, segments, items, notes, toast,
     tSegments, tItems, tNotes, updateSettings, createManual, processMedia, retryTranscription,
-    updateTranscription, updateSegment, updateItem, addItem, importItems, addNote, deleteTranscription,
-    runAnalysis, loadDemo, clearData, sync, refreshWorker, showToast
+    updateTranscription, updateSegment, updateItem, deleteItem, deleteItems, addItem, importItems, addNote, deleteTranscription,
+    runAnalysis, runOllamaAnalysis, loadDemo, clearData, sync, refreshWorker, showToast
   }), [loading, error, online, workerReady, settings, transcriptions, segments, items, notes, toast,
     tSegments, tItems, tNotes, updateSettings, createManual, processMedia, retryTranscription,
-    updateTranscription, updateSegment, updateItem, addItem, importItems, addNote, deleteTranscription,
-    runAnalysis, loadDemo, clearData, sync, refreshWorker, showToast]);
+    updateTranscription, updateSegment, updateItem, deleteItem, deleteItems, addItem, importItems, addNote, deleteTranscription,
+    runAnalysis, runOllamaAnalysis, loadDemo, clearData, sync, refreshWorker, showToast]);
 
   return <AppStoreContext.Provider value={value}>{children}</AppStoreContext.Provider>;
 }

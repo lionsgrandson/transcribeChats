@@ -4,7 +4,7 @@ TranscribeChats is an installable cross-platform PWA for bilingual Hebrew/Englis
 
 Project status: functional MVP implementation.
 
-Application version: `0.2.4`
+Application version: `0.4.0`
 
 Last updated: 2026-07-11
 
@@ -24,15 +24,23 @@ The repository originally recommended Flutter. The implementation uses the PWA o
 
 ## Run the application
 
-Prerequisites: Node.js 22+, npm, and Docker Desktop for real file transcription.
+Prerequisites: Node.js 22+, npm, Docker Desktop, an NVIDIA GPU with current drivers, and Ollama. The default worker now uses CUDA and `float16` on the GPU.
 
 ```powershell
 npm.cmd install
-docker compose up --build -d
-npm.cmd run dev
+npm.cmd start
 ```
 
-Open `http://localhost:4173`. The first real transcription downloads the selected Whisper model into the `transcription-models` Docker volume and will take longer than later requests.
+That single command starts Docker Desktop when necessary, starts Ollama, ensures an installed Ollama model is available, builds and starts the CUDA transcription worker, waits for its health check, and starts the frontend at `http://localhost:4173`. The first build downloads CUDA and Whisper dependencies and is much slower than later starts.
+
+To use another local Ollama model:
+
+```powershell
+$env:OLLAMA_MODEL='qwen3.5:9b'
+npm.cmd start
+```
+
+The startup command does not stop Docker or Ollama when you close the frontend because those may be used by other applications.
 
 If `npm run dev` says `Port 4173 is already in use`, a development server is already running. Do not start a second copy; open `http://localhost:4173` in the browser. To deliberately stop the existing server and start it again in PowerShell:
 
@@ -48,9 +56,11 @@ The application works without the worker for manual text, task/event extraction,
 
 ### Transcription time and progress
 
-Media file size is not a reliable estimate of transcription time; recording duration and processor speed matter much more. For example, a 27 MB video can contain roughly 30 minutes of audio. The default accurate `small` Whisper model may need several minutes on a CPU, and high CPU usage during that time is expected.
+Media file size is not a reliable estimate of transcription time; recording duration matters much more. A 27 MB video is not unusually large, but it can still contain a long recording. Version 0.3.0 runs faster-whisper on NVIDIA CUDA by default and uses GPU VRAM instead of placing the model workload on the CPU. FFmpeg decoding and application housekeeping can still use some CPU and system RAM.
 
-While the local engine runs, the progress percentage between upload and finalization is explicitly marked as an estimate and the app shows elapsed time. Ollama does not perform speech-to-text; it is only used for optional summary and task analysis after Whisper has produced the transcript.
+While the local engine runs, the progress percentage between upload and finalization is explicitly marked as an estimate and the app shows elapsed time. Ollama does not perform speech-to-text. It runs only when you press **Send to Ollama** after Whisper has produced a transcript, and the Whisper model is released first to avoid both models competing for GPU memory.
+
+Automatic extraction is deliberately conservative. It creates review suggestions only for explicit commitments such as “Dana will send the file” and explicit meeting proposals such as “Let’s have a meeting.” An undated meeting stays in review and does not appear on the calendar until you add a date/time and accept it. Advice, predictions, and ordinary conversation are not converted to tasks. Tasks and events support individual editing/deletion plus checkbox-based multi-select deletion.
 
 Starting with version 0.2.4, new media uploads use resumable background jobs. The app saves the worker job ID locally and reconnects to it after a page refresh, so Docker can continue transcribing independently. If Docker itself restarts, the locally saved media remains available and the app presents a Retry action.
 
@@ -133,20 +143,20 @@ The implemented desktop path is an installable PWA: after installation, users la
 1. Install prerequisites.
 
    - Node.js 22 or newer.
-   - Docker Desktop for local audio/video transcription.
+   - Docker Desktop with WSL 2 integration for local audio/video transcription.
+   - An NVIDIA GPU, current NVIDIA drivers, and Docker GPU support. This project is configured for CUDA 12 and cuDNN 9.
    - A modern Chromium-based browser such as Edge or Chrome for PWA installation.
-   - Optional: Ollama for local LLM analysis.
+   - Ollama for the **Send to Ollama** button.
    - Optional: Supabase CLI for local sync testing.
 
 2. Install dependencies and start the app stack.
 
    ```powershell
    npm.cmd install
-   docker compose up --build -d
-   npm.cmd run dev
+   npm.cmd start
    ```
 
-   Open `http://localhost:4173`.
+   Open `http://localhost:4173`. This one command starts Docker Desktop, Ollama, the GPU worker, and the frontend. If your browser was already open, refresh once after startup completes.
 
 3. Install TranscribeChats as a desktop app.
 
@@ -161,21 +171,27 @@ The implemented desktop path is an installable PWA: after installation, users la
    - A **remote engine** is the same Docker/Python service running on another computer, such as a desktop reached from a phone over Wi-Fi or an always-on server. Enter an address such as `http://192.168.1.50:8787` only when that other computer is configured to accept the connection.
    - If the engine is unavailable, manual text, offline history, exports, and task/event extraction from pasted transcripts still work.
 
-5. Start Docker-powered transcription.
+5. Verify GPU-powered transcription.
 
-   Start or stop Docker Desktop normally, then use **Check connection** in Settings > Transcription engine. A browser application cannot start Docker itself for security reasons; this button checks the service but does not turn Docker on. The first transcription downloads the selected Whisper model, so leave Docker running until the first job finishes.
+   Run `npm.cmd start`, then use **Check connection** in Settings > Transcription engine. The status should report `cuda / float16`. The first build and first transcription download large model/runtime files, so leave the terminal and Docker running until they finish.
 
-6. Enable local LLM analysis.
-
-   Start Ollama on the desktop, then restart the worker with the LLM variables:
+   You can also verify the GPU from PowerShell:
 
    ```powershell
-   $env:OLLAMA_URL='http://host.docker.internal:11434'
-   $env:OLLAMA_MODEL='qwen3:4b'
-   docker compose up -d
+   docker compose exec transcription-worker nvidia-smi
+   curl.exe http://localhost:8787/health/ready
    ```
 
-   The app continues to use built-in rules when Ollama is unavailable. This keeps the interface usable even when the local model is off.
+6. Use local LLM analysis.
+
+   `npm.cmd start` starts Ollama and selects an installed model automatically. To choose a specific model, stop the frontend with `Ctrl+C`, then run:
+
+   ```powershell
+   $env:OLLAMA_MODEL='qwen3.5:9b'
+   npm.cmd start
+   ```
+
+   Open a completed transcription and press **Send to Ollama**. LLM extraction is never automatic. Press **Send to ChatGPT** to copy/open the ChatGPT handoff instead. Ollama unloads the model after the response to reduce idle RAM and VRAM use.
 
 7. Control available features from the graphical Settings page.
 
@@ -187,7 +203,7 @@ The implemented desktop path is an installable PWA: after installation, users la
    - Transcription engine: choose this computer or enter another engine address, then press Check connection.
    - Install app: press the install button if the browser exposes the PWA install prompt.
 
-   Docker and Ollama must currently be started outside the PWA. Direct Docker/LLM on/off switches require the optional native Tauri wrapper described below because normal browser pages are not allowed to control operating-system services.
+   The installed PWA cannot directly start privileged operating-system services, so `npm.cmd start` is the master switch for Docker, Ollama, the worker, and the frontend. The in-app buttons choose when to send a transcript to ChatGPT or Ollama; they do not keep either LLM running continuously.
 
 8. Optional native desktop packaging with Tauri.
 
@@ -235,15 +251,16 @@ docker compose up -d
 
 Speaker labels remain anonymous until the user renames them. The app never claims biometric identity.
 
-## Optional local LLM analysis
+## Manual local LLM analysis
 
-Rules-based Hebrew/English extraction works by default. For higher-quality structured extraction with an existing Ollama server:
+Strict rules-based Hebrew/English extraction works by default. Ollama analysis happens only when you press **Send to Ollama**. Start the complete local stack with:
 
 ```powershell
-$env:OLLAMA_URL='http://host.docker.internal:11434'
-$env:OLLAMA_MODEL='qwen3:4b'
-docker compose up -d
+$env:OLLAMA_MODEL='qwen3.5:9b'
+npm.cmd start
 ```
+
+The worker releases Whisper from GPU memory before calling Ollama, and asks Ollama to unload its model after the response. This keeps peak GPU and system-memory use more predictable on an 8 GB GPU.
 
 ## Verification
 
@@ -268,11 +285,13 @@ The UI implements blank, filled, success, failure, and skeleton-loading states. 
 - Record from the microphone with pause/resume and local recovery.
 - Paste manual text and context.
 - Hebrew, English, mixed, or automatic language mode.
+- Auto and mixed modes keep Whisper multilingual, label each segment as Hebrew, English, or mixed, and avoid forcing the entire file into one detected language.
 - Timestamped editable transcript and editable speaker labels.
 - Optional speaker diarization.
-- Tasks, events, summaries, notes, takeaways, priorities, due dates, reminders, and tags.
+- Conservative review-first tasks/events, editable and deletable task records, accepted calendar events, summaries, notes, takeaways, priorities, due dates, reminders, and tags.
 - Transcript, task, event timeline, summary, notes, calendar, and searchable-history views.
-- ChatGPT clipboard handoff and validated preview-before-commit import.
+- ChatGPT clipboard handoff, manual Ollama analysis, and validated preview-before-commit import.
+- Clickable source links jump to and highlight transcript evidence; timestamp play buttons seek the saved source media.
 - TXT, CSV, and browser-native PDF/print export with Hebrew bidi rendering.
 - Offline IndexedDB persistence, PWA installation, Supabase authentication, private media storage, RLS, and bidirectional sync.
 
@@ -296,4 +315,4 @@ Once application scaffolding creates `package.json` and `package-lock.json`, eve
 - Minor: backward-compatible features.
 - Major: breaking schema, API, sync, or user-workflow changes.
 
-The current `package.json` and `package-lock.json` both track application version `0.2.4`.
+The current `package.json` and `package-lock.json` both track application version `0.4.0`.

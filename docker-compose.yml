@@ -6,15 +6,16 @@ services:
         INSTALL_DIARIZATION: ${INSTALL_DIARIZATION:-false}
     ports:
       - "8787:8787"
+    gpus: all
     environment:
       ASR_MODEL: ${ASR_MODEL:-small}
-      ASR_DEVICE: ${ASR_DEVICE:-cpu}
-      ASR_COMPUTE_TYPE: ${ASR_COMPUTE_TYPE:-int8}
+      ASR_DEVICE: ${ASR_DEVICE:-cuda}
+      ASR_COMPUTE_TYPE: ${ASR_COMPUTE_TYPE:-float16}
       ENABLE_DIARIZATION: ${ENABLE_DIARIZATION:-false}
       PYANNOTE_TOKEN: ${PYANNOTE_TOKEN:-}
       PYANNOTE_METRICS_ENABLED: ${PYANNOTE_METRICS_ENABLED:-false}
-      OLLAMA_URL: ${OLLAMA_URL:-}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:9b}
       CORS_ORIGINS: http://localhost:4173,http://127.0.0.1:4173
     volumes:
       - transcription-models:/models

@@ -1,9 +1,10 @@
 {
   "name": "transcribe-chats",
-  "version": "0.2.4",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
+    "start": "node scripts/start-all.mjs",
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",

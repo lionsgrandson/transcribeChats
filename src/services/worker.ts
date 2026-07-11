@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { AnalysisResult, LanguageMode, TranscriptSegment } from '../domain/types';
 
-const workerResponseSchema = z.object({
+export const workerResponseSchema = z.object({
   duration_ms: z.number().nonnegative().optional(),
   detected_languages: z.array(z.string()).default([]),
   segments: z.array(z.object({
@@ -9,10 +9,10 @@ const workerResponseSchema = z.object({
     start_ms: z.number(), end_ms: z.number(), text: z.string(), language: z.string().default('auto'),
     confidence: z.number().optional()
   })),
-  analysis: z.object({ summary: z.string().default(''), items: z.array(z.record(z.string(), z.unknown())).default([]) }).optional()
+  analysis: z.object({ summary: z.string().default(''), items: z.array(z.record(z.string(), z.unknown())).default([]) }).nullish()
 });
 
-const jobStatusSchema = z.object({
+export const jobStatusSchema = z.object({
   job_id: z.string(),
   status: z.enum(['queued', 'processing', 'ready', 'failed']),
   progress: z.number().min(0).max(100),
@@ -47,7 +47,7 @@ export async function transcribeWithWorker(
     form.append('language_mode', languageMode);
     form.append('context', context);
     form.append('recorded_at', recordedAt);
-    form.append('analyze', 'true');
+    form.append('analyze', 'false');
     await onProgress(12, 'Uploading to transcription engine');
     const response = await fetch(`${baseUrl}/v1/jobs`, { method: 'POST', body: form });
     if (!response.ok) {
@@ -93,7 +93,7 @@ export async function transcribeWithWorker(
       text: segment.text, originalText: segment.text, language: segment.language,
       confidence: segment.confidence, edited: false
     })),
-    analysis: parsed.analysis as AnalysisResult | undefined
+    analysis: (parsed.analysis ?? undefined) as AnalysisResult | undefined
   };
 }
 
@@ -104,4 +104,31 @@ export async function checkWorker(workerUrl: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function analyzeWithOllama(workerUrl: string, segments: TranscriptSegment[], recordedAt: string, context: string): Promise<AnalysisResult> {
+  const response = await fetch(`${workerUrl.replace(/\/$/, '')}/v1/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recorded_at: recordedAt,
+      context,
+      segments: segments.map((segment) => ({
+        id: segment.id,
+        sequence_no: segment.sequenceNo,
+        speaker_label: segment.speakerLabel,
+        start_ms: segment.startMs,
+        end_ms: segment.endMs,
+        text: segment.text,
+        language: segment.language,
+        confidence: segment.confidence
+      }))
+    })
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Ollama analysis returned ${response.status}`);
+  }
+  const parsed = z.object({ summary: z.string(), items: z.array(z.record(z.string(), z.unknown())).default([]) }).parse(await response.json());
+  return parsed as AnalysisResult;
 }
