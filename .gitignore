@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.local
+*.log
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+.DS_Store
+.idea/
+.vscode/
+services/worker_python/.venv/
+services/worker_python/__pycache__/
+services/worker_python/.models/
+services/worker_python/.cache/
+supabase/.temp/
