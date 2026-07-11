@@ -121,6 +121,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, [items, settings.remindersEnabled]);
 
   const refreshWorker = useCallback(async () => {
+    setWorkerReady(null);
     setWorkerReady(await checkWorker(settings.workerUrl));
   }, [settings.workerUrl]);
   useEffect(() => { void refreshWorker(); }, [refreshWorker]);

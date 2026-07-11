@@ -28,7 +28,10 @@ export default defineConfig({
   ],
   server: {
     port: 4173,
-    strictPort: true
+    strictPort: true,
+    headers: {
+      'Cache-Control': 'no-store'
+    }
   },
   test: {
     environment: 'jsdom',

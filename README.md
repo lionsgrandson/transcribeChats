@@ -4,7 +4,7 @@ TranscribeChats is an installable cross-platform PWA for bilingual Hebrew/Englis
 
 Project status: functional MVP implementation.
 
-Application version: `0.2.1`
+Application version: `0.2.2`
 
 Last updated: 2026-07-11
 
@@ -33,6 +33,16 @@ npm.cmd run dev
 ```
 
 Open `http://localhost:4173`. The first real transcription downloads the selected Whisper model into the `transcription-models` Docker volume and will take longer than later requests.
+
+If `npm run dev` says `Port 4173 is already in use`, a development server is already running. Do not start a second copy; open `http://localhost:4173` in the browser. To deliberately stop the existing server and start it again in PowerShell:
+
+```powershell
+Get-NetTCPConnection -LocalPort 4173 -State Listen |
+  ForEach-Object { Stop-Process -Id $_.OwningProcess }
+npm.cmd run dev
+```
+
+If the page is blank after the development server was restarted, open `http://localhost:4173` rather than switching between `localhost` and `127.0.0.1`, then press `Ctrl+Shift+R` once. Version 0.2.2 also displays a recovery screen instead of remaining blank when a page module is stale.
 
 The application works without the worker for manual text, task/event extraction, offline history, exports, and the demo workspace. Recording and uploaded media remain safely stored in IndexedDB when the worker is unavailable and can be retried later.
 
@@ -134,17 +144,18 @@ The implemented desktop path is an installable PWA: after installation, users la
 
    In Edge or Chrome, open the browser app menu and choose Install TranscribeChats, Install app, or Apps > Install this site as an app. After that, launch TranscribeChats from the operating system app launcher instead of returning to the terminal.
 
-4. Configure transcription from the graphical interface.
+4. Configure the transcription engine from the graphical interface.
 
-   Open Settings > Processing:
+   Open Settings > Transcription engine. The “engine” (previously called the “worker”) is the Python service that runs Whisper and converts media into transcript text.
 
-   - Use Local worker URL to point at `http://localhost:8787` or a remote worker.
-   - Press Check to confirm the Docker worker is reachable.
-   - If the worker is unavailable, the app still supports manual text, offline history, exports, and extracted tasks/events from pasted transcripts.
+   - If Docker is running on the same computer as the app, press **Use this computer**. The address is `http://localhost:8787`.
+   - Press **Check connection**. “Engine is ready” means uploaded media can be transcribed.
+   - A **remote engine** is the same Docker/Python service running on another computer, such as a desktop reached from a phone over Wi-Fi or an always-on server. Enter an address such as `http://192.168.1.50:8787` only when that other computer is configured to accept the connection.
+   - If the engine is unavailable, manual text, offline history, exports, and task/event extraction from pasted transcripts still work.
 
-5. Enable Docker-powered transcription.
+5. Start Docker-powered transcription.
 
-   Start or stop Docker Desktop normally, then use the Check button in Settings > Processing to refresh worker status. The first transcription downloads the selected Whisper model, so leave Docker running until the first job finishes.
+   Start or stop Docker Desktop normally, then use **Check connection** in Settings > Transcription engine. A browser application cannot start Docker itself for security reasons; this button checks the service but does not turn Docker on. The first transcription downloads the selected Whisper model, so leave Docker running until the first job finishes.
 
 6. Enable local LLM analysis.
 
@@ -158,15 +169,17 @@ The implemented desktop path is an installable PWA: after installation, users la
 
    The app continues to use built-in rules when Ollama is unavailable. This keeps the interface usable even when the local model is off.
 
-7. Enable sync, reminders, and install controls from buttons.
+7. Control available features from the graphical Settings page.
 
    Open Settings:
 
    - Language and direction: choose English or Hebrew.
    - Cloud sync: sign in with magic link, then press Sync now.
    - Reminders: switch task reminders on or off.
-   - Processing: press Check after changing Docker, worker, or LLM configuration.
+   - Transcription engine: choose this computer or enter another engine address, then press Check connection.
    - Install app: press the install button if the browser exposes the PWA install prompt.
+
+   Docker and Ollama must currently be started outside the PWA. Direct Docker/LLM on/off switches require the optional native Tauri wrapper described below because normal browser pages are not allowed to control operating-system services.
 
 8. Optional native desktop packaging with Tauri.
 
@@ -275,4 +288,4 @@ Once application scaffolding creates `package.json` and `package-lock.json`, eve
 - Minor: backward-compatible features.
 - Major: breaking schema, API, sync, or user-workflow changes.
 
-The current `package.json` and `package-lock.json` both track application version `0.2.1`.
+The current `package.json` and `package-lock.json` both track application version `0.2.2`.
