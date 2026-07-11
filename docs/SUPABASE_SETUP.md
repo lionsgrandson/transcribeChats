@@ -125,7 +125,7 @@ For a deployed PWA or a phone connecting over the LAN, add its exact origin to `
 docker compose up --build -d
 ```
 
-`INSTALL_DIARIZATION=true` is a Docker build option. `ENABLE_DIARIZATION=true` enables it at runtime, and `PYANNOTE_TOKEN` must have access to the configured Hugging Face model.
+Lightweight acoustic diarization is built in and requires no token. `INSTALL_DIARIZATION=true` is the Docker build option for the optional higher-quality pyannote engine. `ENABLE_DIARIZATION=true` enables pyannote at runtime, and `PYANNOTE_TOKEN` must have access to the configured Hugging Face model.
 
 ## 7. Test authentication and synchronization
 

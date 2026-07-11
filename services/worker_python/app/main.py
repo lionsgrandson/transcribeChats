@@ -17,7 +17,7 @@ logger = logging.getLogger("transcribe-chats.worker")
 jobs: dict[str, TranscriptionJobStatus] = {}
 job_semaphore = asyncio.Semaphore(1)
 
-app = FastAPI(title="TranscribeChats Worker", version="0.5.0", docs_url="/docs")
+app = FastAPI(title="TranscribeChats Worker", version="0.6.0", docs_url="/docs")
 app.add_middleware(CORSMiddleware, allow_origins=settings.origins, allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["*"])
 
 

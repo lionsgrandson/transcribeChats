@@ -5,6 +5,7 @@ import threading
 import uuid
 from pathlib import Path
 
+from .diarization import apply_participant_names, diarize_acoustically
 from .schemas import Segment
 from .settings import settings
 
@@ -24,7 +25,7 @@ def release_model() -> None:
     gc.collect()
 
 
-def diarization_available() -> bool:
+def _pyannote_available() -> bool:
     if not settings.enable_diarization or not settings.pyannote_token:
         return False
     try:
@@ -32,6 +33,10 @@ def diarization_available() -> bool:
         return True
     except ImportError:
         return False
+
+
+def diarization_available() -> bool:
+    return True
 
 
 def _get_model():
@@ -92,7 +97,7 @@ def _transcribe_sync(path: Path, language_mode: str, context: str) -> tuple[list
 
 def _diarize_sync(path: Path, segments: list[Segment]) -> list[Segment]:
     global _diarization_pipeline
-    if not diarization_available():
+    if not _pyannote_available():
         return segments
     os.environ["PYANNOTE_METRICS_ENABLED"] = "1" if settings.pyannote_metrics_enabled else "0"
     from pyannote.audio import Pipeline
@@ -110,7 +115,11 @@ def _diarize_sync(path: Path, segments: list[Segment]) -> list[Segment]:
 
 async def transcribe(path: Path, language_mode: str, context: str = "") -> tuple[list[Segment], list[str], int | None, bool]:
     segments, languages, duration = await asyncio.to_thread(_transcribe_sync, path, language_mode, context)
-    used_diarization = diarization_available()
-    if used_diarization:
+    used_diarization = False
+    if _pyannote_available():
         segments = await asyncio.to_thread(_diarize_sync, path, segments)
+        apply_participant_names(segments, context)
+        used_diarization = len({segment.speaker_label for segment in segments}) > 1
+    if not used_diarization:
+        used_diarization = await asyncio.to_thread(diarize_acoustically, path, segments, context)
     return segments, languages, duration, used_diarization

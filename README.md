@@ -4,7 +4,7 @@ TranscribeChats is an installable cross-platform PWA for bilingual Hebrew/Englis
 
 Project status: functional MVP implementation.
 
-Application version: `0.5.0`
+Application version: `0.6.0`
 
 Last updated: 2026-07-11
 
@@ -239,9 +239,11 @@ VITE_WORKER_URL=http://localhost:8787
 
 Restart the Vite server. Sign in with a magic link from Settings, then use Sync now. The migration creates private workspaces, RLS policies, transcript/task/note tables, and a private media bucket.
 
-## Enable speaker diarization
+## Speaker diarization
 
-The base worker assigns `Speaker 1`. To enable actual anonymous speaker diarization, obtain access to the configured `pyannote` community model and set:
+The base worker includes lightweight local acoustic speaker separation without another model download. For best results, enter participant names as `People: Dana, Noam`; the detected voice clusters receive those names in first-heard order and should be reviewed afterward.
+
+For higher-quality pyannote diarization, obtain access to the configured community model and set:
 
 ```powershell
 $env:INSTALL_DIARIZATION='true'
@@ -251,7 +253,7 @@ docker compose build --no-cache transcription-worker
 docker compose up -d
 ```
 
-Speaker labels remain anonymous until the user renames them. The app never claims biometric identity.
+Without supplied names, local clusters use anonymous labels. The app never claims biometric identity, and names supplied as context are voice-cluster hints rather than biometric verification.
 
 ## Manual local LLM analysis
 
@@ -288,11 +290,11 @@ The UI implements blank, filled, success, failure, and skeleton-loading states. 
 - Paste manual text and context.
 - Hebrew, English, mixed, or automatic language mode.
 - Auto and mixed modes keep Whisper multilingual, label each segment as Hebrew, English, or mixed, and avoid forcing the entire file into one detected language.
-- Timestamped editable transcript and editable speaker labels.
-- Optional speaker diarization.
+- Timestamped editable transcript, 0.5×–4× source-media playback, and editable speaker labels.
+- Built-in lightweight acoustic speaker separation, participant-name hints, and optional higher-quality pyannote diarization.
 - Conservative review-first tasks/events, editable and deletable task records, accepted calendar events, summaries, notes, takeaways, priorities, due dates, reminders, and tags.
 - Transcript, task, event timeline, summary, notes, calendar, and searchable-history views.
-- ChatGPT clipboard handoff, manual Ollama analysis, and validated preview-before-commit import.
+- ChatGPT clipboard handoff and manual Ollama analysis preserve segment IDs and start/end timestamps; imported items remain linked to playable source evidence.
 - Clickable source links jump to and highlight transcript evidence; timestamp play buttons seek the saved source media.
 - TXT, CSV, and browser-native PDF/print export with Hebrew bidi rendering.
 - Offline IndexedDB persistence, PWA installation, Supabase authentication, private media storage, RLS, and bidirectional sync.
@@ -317,4 +319,4 @@ Once application scaffolding creates `package.json` and `package-lock.json`, eve
 - Minor: backward-compatible features.
 - Major: breaking schema, API, sync, or user-workflow changes.
 
-The current `package.json` and `package-lock.json` both track application version `0.5.0`.
+The current `package.json` and `package-lock.json` both track application version `0.6.0`.
