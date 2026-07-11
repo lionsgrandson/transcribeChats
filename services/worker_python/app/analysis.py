@@ -7,25 +7,27 @@ import httpx
 from .schemas import Analysis, AnalysisItem, Segment
 from .settings import settings
 
-TASK_RE = re.compile(r"\b(will|need to|needs to|should|action item|follow up|send|prepare|finish|call|email)\b|צריך|צריכה|אשלח|ישלח|תשלח|להכין|לסיים|לטפל|משימה", re.I)
-EVENT_RE = re.compile(r"\b(meeting|review|appointment|birthday|offline|vacation|deadline|launch)\b|פגישה|ישיבה|סקירה|יום הולדת|חופש|לא זמין|השקה", re.I)
-TAKEAWAY_RE = re.compile(r"\b(important|remember|decision|agreed|confirmed|blocked)\b|חשוב|לזכור|החלטה|סיכמנו|אושר|חסום", re.I)
+ACTION_VERBS = r"(?:send|call|email|schedule|book|prepare|deliver|finish|update|review|follow\s+up|pay|buy|submit|upload|create|fix|contact|share|write)"
+ENGLISH_TASK_RE = re.compile(rf"\b(?:(?:i|we|you|[A-Z][a-z]+)\s+(?:will|shall|must|have\s+to|am\s+going\s+to|are\s+going\s+to|committed\s+to)|(?:please|can\s+you|could\s+you))\s+{ACTION_VERBS}\b", re.I)
+HEBREW_TASK_RE = re.compile(r"(?:אני|אנחנו)\s+(?:אשלח|נשלח|אתקשר|נתקשר|אכין|נכין|אסיים|נסיים|אעדכן|נעדכן|אקבע|נקבע|אטפל|נטפל)|(?:בבקשה|נא)\s+(?:שלח|תשלח|התקשר|תתקשר|תכין|תעדכן|תקבע)", re.I)
+MEETING_RE = re.compile(r"\b(?:let'?s|we\s+will|can\s+we|please)\s+(?:(?:have|schedule|book)\s+)?(?:a\s+)?(?:meeting|call|appointment)\b|\b(?:schedule|book)\s+(?:a\s+)?(?:meeting|call|appointment)\b|(?:בואו?|נקבע)\s+(?:פגישה|ישיבה|שיחה)", re.I)
+DECISION_RE = re.compile(r"\b(?:we\s+decided|we\s+agreed|decision:)\b|(?:החלטנו|סיכמנו)", re.I)
 
 
-def _relative_date(text: str, reference: datetime) -> tuple[str | None, str | None]:
+def _date(text: str, reference: datetime) -> str | None:
     value = reference
-    reason = None
-    if re.search(r"tomorrow|מחר", text, re.I):
+    iso_match = re.search(r"\b(20\d{2})-(\d{1,2})-(\d{1,2})\b", text)
+    if iso_match:
+        value = value.replace(year=int(iso_match.group(1)), month=int(iso_match.group(2)), day=int(iso_match.group(3)))
+    elif re.search(r"tomorrow|מחר", text, re.I):
         value += timedelta(days=1)
-        reason = "Relative date inferred from the conversation date."
     elif re.search(r"next week|שבוע הבא", text, re.I):
         value += timedelta(days=7)
-        reason = "Relative date inferred from the conversation date."
     elif not re.search(r"today|היום", text, re.I):
-        return None, None
-    match = re.search(r"(?:at\s*)?(\d{1,2})(?::(\d{2}))?", text, re.I)
-    value = value.replace(hour=int(match.group(1)) if match else 9, minute=int(match.group(2) or 0) if match else 0, second=0, microsecond=0)
-    return value.isoformat(), reason
+        return None
+    time_match = re.search(r"(?:at|בשעה)\s*(\d{1,2})(?::(\d{2}))?", text, re.I)
+    value = value.replace(hour=int(time_match.group(1)) if time_match else 9, minute=int(time_match.group(2) or 0) if time_match else 0, second=0, microsecond=0)
+    return value.isoformat()
 
 
 def _priority(text: str) -> str:
@@ -41,29 +43,37 @@ def analyze_rules(segments: list[Segment], conversation_date: datetime) -> Analy
     for segment in segments:
         for sentence in filter(None, re.split(r"(?<=[.!?])\s+|\n+", segment.text.strip())):
             source = [segment.id] if segment.id else []
-            if TASK_RE.search(sentence):
-                due_at, uncertainty = _relative_date(sentence, conversation_date)
-                items.append(AnalysisItem(kind="task", title=sentence[:300], priority=_priority(sentence), dueAt=due_at, uncertaintyReason=uncertainty, sourceSegmentIds=source, confidence=0.74))
-            elif EVENT_RE.search(sentence):
-                starts_at, uncertainty = _relative_date(sentence, conversation_date)
-                items.append(AnalysisItem(kind="event", title=sentence[:300], startsAt=starts_at, uncertaintyReason=uncertainty, sourceSegmentIds=source, confidence=0.72))
-            elif TAKEAWAY_RE.search(sentence):
-                items.append(AnalysisItem(kind="takeaway", title=sentence[:300], status="open", sourceSegmentIds=source, confidence=0.68))
+            if MEETING_RE.search(sentence):
+                starts_at = _date(sentence, conversation_date)
+                items.append(AnalysisItem(kind="event", title=sentence[:300], status="needs_review", startsAt=starts_at, uncertaintyReason=None if starts_at else "Add a date and time before accepting this event into the calendar.", sourceSegmentIds=source, confidence=0.9 if starts_at else 0.72))
+            elif ENGLISH_TASK_RE.search(sentence) or HEBREW_TASK_RE.search(sentence):
+                items.append(AnalysisItem(kind="task", title=sentence[:300], status="needs_review", priority=_priority(sentence), dueAt=_date(sentence, conversation_date), sourceSegmentIds=source, confidence=0.9))
+            elif DECISION_RE.search(sentence):
+                items.append(AnalysisItem(kind="takeaway", title=sentence[:300], status="open", sourceSegmentIds=source, confidence=0.86))
     summary = " ".join(segment.text.strip() for segment in segments[:4])[:800]
     return Analysis(summary=summary, items=items)
 
 
 async def analyze(segments: list[Segment], conversation_date: datetime, context: str) -> Analysis:
     if not settings.ollama_url:
-        return analyze_rules(segments, conversation_date)
+        raise RuntimeError("Ollama is not configured for the transcription worker.")
     transcript = "\n".join(f"[{segment.start_ms}] {segment.speaker_label}: {segment.text}" for segment in segments)
-    prompt = f"""Extract tasks, events, notes, and takeaways from this Hebrew/English transcript.
-Return JSON with summary and items. Do not invent dates or assignees. Conversation date: {conversation_date.isoformat()}.
+    prompt = f"""Analyze this Hebrew/English transcript. Return JSON matching the supplied schema.
+
+Rules:
+- A task is allowed only when a speaker explicitly commits a person to a concrete action, e.g. "Dana will send the file" or "please call Amir".
+- Do not convert advice, predictions, opinions, descriptions, or phrases like "you need to understand" into tasks.
+- An event is allowed only for an explicit proposal to schedule/have a meeting, call, or appointment. Ordinary mentions of meetings are not events.
+- Preserve a meeting proposal without a date as needs_review with startsAt null. Never invent a date or time.
+- Every task/event must be needs_review and confirmed=false. Preserve source segment IDs.
+- Return a concise summary even when there are no actionable items.
+
+Conversation date: {conversation_date.isoformat()}
 Context: {context}
 Transcript:\n{transcript}"""
     schema = Analysis.model_json_schema()
-    async with httpx.AsyncClient(timeout=180) as client:
-        response = await client.post(f"{settings.ollama_url.rstrip('/')}/api/generate", json={"model": settings.ollama_model, "prompt": prompt, "format": schema, "stream": False})
+    async with httpx.AsyncClient(timeout=600) as client:
+        response = await client.post(f"{settings.ollama_url.rstrip('/')}/api/generate", json={"model": settings.ollama_model, "prompt": prompt, "format": schema, "stream": False, "keep_alive": 0, "options": {"temperature": 0}})
         response.raise_for_status()
         content = response.json().get("response", "{}")
         return Analysis.model_validate(json.loads(content))

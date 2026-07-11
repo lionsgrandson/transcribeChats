@@ -8,8 +8,8 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .analysis import analyze as analyze_segments
-from .engine import diarization_available, model_loaded, transcribe
-from .schemas import HealthResponse, TranscriptionJobStatus, TranscriptionResponse
+from .engine import diarization_available, model_loaded, release_model, transcribe
+from .schemas import Analysis, AnalysisRequest, HealthResponse, TranscriptionJobStatus, TranscriptionResponse
 from .settings import settings
 
 SUPPORTED_EXTENSIONS = {".mp3", ".m4a", ".mp4", ".mov", ".wav", ".webm", ".mpeg", ".mpga", ".ogg", ".flac"}
@@ -17,7 +17,7 @@ logger = logging.getLogger("transcribe-chats.worker")
 jobs: dict[str, TranscriptionJobStatus] = {}
 job_semaphore = asyncio.Semaphore(1)
 
-app = FastAPI(title="TranscribeChats Worker", version="0.2.4", docs_url="/docs")
+app = FastAPI(title="TranscribeChats Worker", version="0.4.0", docs_url="/docs")
 app.add_middleware(CORSMiddleware, allow_origins=settings.origins, allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["*"])
 
 
@@ -81,6 +81,7 @@ async def run_job(job_id: str, target: Path, language_mode: str, analyze: bool, 
             result = await build_result(target, language_mode, False, recorded_at, context)
             jobs[job_id] = TranscriptionJobStatus(job_id=job_id, status="processing", progress=85, stage="Analyzing transcript")
             if analyze:
+                release_model()
                 try:
                     reference = datetime.fromisoformat(recorded_at.replace("Z", "+00:00")) if recorded_at else datetime.now(timezone.utc)
                 except ValueError:
@@ -118,6 +119,22 @@ async def get_transcription_job(job_id: str) -> TranscriptionJobStatus:
     if not status:
         raise HTTPException(status_code=404, detail="Transcription job not found. The worker may have restarted.")
     return status
+
+
+@app.post("/v1/analyze", response_model=Analysis)
+async def analyze_transcript(request: AnalysisRequest) -> Analysis:
+    if not request.segments:
+        raise HTTPException(status_code=400, detail="A transcript is required before Ollama analysis.")
+    try:
+        reference = datetime.fromisoformat(request.recorded_at.replace("Z", "+00:00")) if request.recorded_at else datetime.now(timezone.utc)
+    except ValueError:
+        reference = datetime.now(timezone.utc)
+    release_model()
+    try:
+        return await analyze_segments(request.segments, reference, request.context[:4000])
+    except Exception as error:
+        logger.exception("Ollama analysis failed")
+        raise HTTPException(status_code=502, detail=f"Ollama analysis failed: {error}") from error
 
 
 @app.post("/v1/transcribe", response_model=TranscriptionResponse)
