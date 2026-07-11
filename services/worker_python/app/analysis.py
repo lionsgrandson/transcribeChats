@@ -8,7 +8,7 @@ from .schemas import Analysis, AnalysisItem, Segment
 from .settings import settings
 
 ACTION_VERBS = r"(?:send|call|email|schedule|book|prepare|deliver|finish|update|review|follow\s+up|pay|buy|submit|upload|create|fix|contact|share|write)"
-ENGLISH_TASK_RE = re.compile(rf"\b(?:(?:i|we|you|[A-Z][a-z]+)\s+(?:will|shall|must|have\s+to|am\s+going\s+to|are\s+going\s+to|committed\s+to)|(?:please|can\s+you|could\s+you))\s+{ACTION_VERBS}\b", re.I)
+ENGLISH_TASK_RE = re.compile(rf"\b(?:(?:i|we)\s+(?:will|shall|must|have\s+to|am\s+going\s+to|are\s+going\s+to|committed\s+to)|you\s+(?:must|have\s+to)|(?:please|can\s+you|could\s+you))\s+{ACTION_VERBS}\b", re.I)
 HEBREW_TASK_RE = re.compile(r"(?:אני|אנחנו)\s+(?:אשלח|נשלח|אתקשר|נתקשר|אכין|נכין|אסיים|נסיים|אעדכן|נעדכן|אקבע|נקבע|אטפל|נטפל)|(?:בבקשה|נא)\s+(?:שלח|תשלח|התקשר|תתקשר|תכין|תעדכן|תקבע)", re.I)
 MEETING_RE = re.compile(r"\b(?:let'?s|we\s+will|can\s+we|please)\s+(?:(?:have|schedule|book)\s+)?(?:a\s+)?(?:meeting|call|appointment)\b|\b(?:schedule|book)\s+(?:a\s+)?(?:meeting|call|appointment)\b|(?:בואו?|נקבע)\s+(?:פגישה|ישיבה|שיחה)", re.I)
 DECISION_RE = re.compile(r"\b(?:we\s+decided|we\s+agreed|decision:)\b|(?:החלטנו|סיכמנו)", re.I)
@@ -28,7 +28,10 @@ def _date(text: str, reference: datetime) -> str | None:
         return None
     time_match = re.search(r"(?:at|בשעה)\s*(\d{1,2})(?::(\d{2}))?", text, re.I)
     value = value.replace(hour=int(time_match.group(1)) if time_match else 9, minute=int(time_match.group(2) or 0) if time_match else 0, second=0, microsecond=0)
-    return value.isoformat()
+    # Spoken wall-clock times such as "tomorrow at 10" refer to the user's local
+    # conversation time. Return a timezone-free value so the client persists it
+    # in its configured local timezone instead of shifting it by the UTC offset.
+    return value.replace(tzinfo=None).isoformat()
 
 
 def _priority(text: str) -> str:
@@ -75,7 +78,7 @@ def _best_source_ids(item: AnalysisItem, segments: list[Segment]) -> list[str]:
     if not scored:
         return []
     score, source = max(scored, key=lambda value: value[0])
-    return [source] if score > 0 else []
+    return [source]
 
 
 def _ensure_meaningful_notes(result: Analysis, segments: list[Segment]) -> None:
@@ -110,7 +113,8 @@ async def analyze(segments: list[Segment], conversation_date: datetime, context:
     prompt = f"""Analyze this Hebrew/English transcript and produce the complete workspace output.
 
 Rules:
-- A task is allowed only when a speaker explicitly commits a person to a concrete action, e.g. "Dana will send the file" or "please call Amir".
+- A task is allowed only for an unambiguous first-person commitment ("I will send the file") or a direct request/command ("please send the file" or "can you call Amir?").
+- A statement about what another person may do, a prediction, or a future fact is a note unless the transcript explicitly records an accepted assignment.
 - Do not convert advice, predictions, opinions, descriptions, or phrases like "you need to understand" into tasks.
 - An event is allowed only for an explicit proposal to schedule/have a meeting, call, or appointment. Ordinary mentions of meetings are not events.
 - Preserve a meeting proposal without a date as needs_review with startsAt null. Never invent a date or time.
@@ -134,7 +138,7 @@ Transcript:\n{transcript}"""
             "format": schema,
             "stream": False,
             "think": False,
-            "keep_alive": 0,
+            "keep_alive": "5m",
             "options": {"temperature": 0},
         })
         response.raise_for_status()
@@ -160,8 +164,14 @@ Transcript:\n{transcript}"""
             if item.kind == "task":
                 item.startsAt = None
                 item.endsAt = None
+                source_due_at = _date(source_text, conversation_date) if source_text else None
+                if source_due_at:
+                    item.dueAt = source_due_at
             if item.kind == "event":
                 item.dueAt = None
+                source_starts_at = _date(source_text, conversation_date) if source_text else None
+                if source_starts_at:
+                    item.startsAt = source_starts_at
             if item.kind == "event" and not item.startsAt and not item.uncertaintyReason:
                 item.uncertaintyReason = "Add a date and time before accepting this event into the calendar."
         if not result.summary.strip():

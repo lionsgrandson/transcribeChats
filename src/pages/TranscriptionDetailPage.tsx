@@ -146,13 +146,21 @@ export function TranscriptionDetailPage() {
     finally { setOllamaBusy(false); }
   };
   const deleteRecord = async () => { if (confirm(t('deleteConfirm'))) { await store.deleteTranscription(id); navigate('/history'); } };
+  const exportPdf = () => {
+    try {
+      printPdf(transcription, segments, items);
+      store.showToast('PDF print window opened. Choose “Save as PDF” in the print dialog.');
+    } catch (reason) {
+      store.showToast(reason instanceof Error ? reason.message : 'Could not open the PDF print window.');
+    }
+  };
   const tabs = [{ id: 'transcript', label: t('transcript'), icon: FileText }, { id: 'tasks', label: t('tasks'), icon: ListChecks }, { id: 'timeline', label: t('timeline'), icon: CalendarDays }, { id: 'summary', label: t('summary'), icon: Sparkles }, { id: 'notes', label: t('notes'), icon: MessageSquareText }];
 
   return <div className="page detail-page">
     <Link className="back-link" to="/history"><ArrowLeft size={16} />{t('back')} {t('history').toLowerCase()}</Link>
     <header className="detail-header">
       <div><div className="title-line"><h1 dir="auto">{transcription.title}</h1><StatusBadge status={transcription.status} /></div><div className="detail-meta"><span>{formatDate(transcription.recordedAt, 'MMM d, yyyy · HH:mm')}</span><span>{formatDuration(transcription.durationMs)}</span><span>{transcription.detectedLanguages.join(' + ') || transcription.languageMode}</span><span>{transcription.synced ? t('synced') : t('savedLocally')}</span></div></div>
-      <div className="header-actions"><Button variant="secondary" onClick={() => setChatOpen(true)}><Sparkles size={17} />{t('openInChatGPT')}</Button><Button variant="secondary" busy={ollamaBusy} disabled={!segments.length} onClick={() => void analyzeWithOllama()}><Bot size={17} />{ollamaBusy ? 'Analyzing with Ollama…' : 'Analyze with Ollama'}</Button><div className="menu-wrap"><Button variant="secondary" onClick={() => setExportOpen((value) => !value)}><Download size={17} />{t('export')}</Button>{exportOpen && <div className="action-menu"><button onClick={() => { exportText(transcription, segments, items); setExportOpen(false); }}>{t('exportText')}</button><button onClick={() => { exportCsv(transcription, items); setExportOpen(false); }}>{t('exportCsv')}</button><button onClick={() => { printPdf(transcription, segments, items); setExportOpen(false); }}>{t('exportPdf')}</button></div>}</div><button className="icon-button" title={t('delete')} onClick={() => void deleteRecord()}><Trash2 /></button></div>
+      <div className="header-actions"><Button variant="secondary" onClick={() => setChatOpen(true)}><Sparkles size={17} />{t('openInChatGPT')}</Button><Button variant="secondary" busy={ollamaBusy} disabled={!segments.length} onClick={() => void analyzeWithOllama()}><Bot size={17} />{ollamaBusy ? 'Analyzing with Ollama…' : 'Analyze with Ollama'}</Button><div className="menu-wrap"><Button variant="secondary" onClick={() => setExportOpen((value) => !value)}><Download size={17} />{t('export')}</Button>{exportOpen && <div className="action-menu"><button onClick={() => { exportText(transcription, segments, items); setExportOpen(false); }}>{t('exportText')}</button><button onClick={() => { exportCsv(transcription, items); setExportOpen(false); }}>{t('exportCsv')}</button><button onClick={() => { exportPdf(); setExportOpen(false); }}>{t('exportPdf')}</button></div>}</div><button className="icon-button" title={t('delete')} onClick={() => void deleteRecord()}><Trash2 /></button></div>
     </header>
 
     {ollamaBusy && <div className="banner banner-neutral ollama-banner" role="status"><LoaderCircle className="spin" /><div><strong>Ollama is analyzing the full transcript</strong><span>Creating the summary, explicit tasks, meeting events, important notes, and dated timeline. Large transcripts can take a few minutes.</span></div></div>}

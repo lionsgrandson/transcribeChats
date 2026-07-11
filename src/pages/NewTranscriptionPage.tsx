@@ -7,6 +7,10 @@ import { useTranslation } from '../i18n/useTranslation';
 import { formatDuration } from '../lib/format';
 import { useAppStore } from '../state/AppStore';
 
+function localDateTimeInputValue(date = new Date()): string {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
 type Mode = 'record' | 'upload' | 'text';
 
 export function NewTranscriptionPage() {
@@ -19,7 +23,7 @@ export function NewTranscriptionPage() {
   const [title, setTitle] = useState('');
   const [languageMode, setLanguageMode] = useState<LanguageMode>(settings.languageMode);
   const [context, setContext] = useState('');
-  const [recordedAt, setRecordedAt] = useState(new Date().toISOString().slice(0, 16));
+  const [recordedAt, setRecordedAt] = useState(() => localDateTimeInputValue());
   const [text, setText] = useState('');
   const [file, setFile] = useState<File>();
   const [dragging, setDragging] = useState(false);

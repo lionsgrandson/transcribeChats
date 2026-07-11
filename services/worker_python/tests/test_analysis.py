@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.analysis import _best_source_ids, _ensure_meaningful_notes, analyze, analyze_rules  # noqa: E402
+from app.analysis import ENGLISH_TASK_RE, _best_source_ids, _ensure_meaningful_notes, analyze, analyze_rules  # noqa: E402
 from app.schemas import Analysis, AnalysisItem, Segment  # noqa: E402
 from app.settings import settings  # noqa: E402
 
@@ -36,9 +36,32 @@ class FakeOllamaClient:
         return FakeOllamaResponse()
 
 
+class FakeDatedEventResponse(FakeOllamaResponse):
+    def json(self):
+        return {"message": {"content": '{"summary":"Launch planning","items":[{"kind":"event","title":"Launch meeting","startsAt":"2026-07-12T17:00:00Z","sourceSegmentIds":["s1"]}]}'}, "done_reason": "stop"}
+
+
+class FakeDatedEventClient(FakeOllamaClient):
+    async def post(self, url, json):
+        FakeOllamaClient.payload = json
+        return FakeDatedEventResponse()
+
+
 class AnalysisTests(unittest.TestCase):
+    def test_normalizes_invalid_model_fields_before_the_ui_receives_them(self):
+        item = AnalysisItem.model_validate({
+            "kind": "event",
+            "title": "Meeting mention",
+            "startsAt": "tomorrow afternoon",
+            "tags": None,
+            "sourceSegmentIds": None,
+        })
+        self.assertIsNone(item.startsAt)
+        self.assertEqual(item.tags, [])
+        self.assertEqual(item.sourceSegmentIds, [])
+
     def test_extracts_english_task_and_relative_date(self):
-        segments = [Segment(id="s1", sequence_no=0, start_ms=0, end_ms=1000, text="Dana will send the final email tomorrow at 10.")]
+        segments = [Segment(id="s1", sequence_no=0, start_ms=0, end_ms=1000, text="I will send the final email tomorrow at 10.")]
         result = analyze_rules(segments, datetime(2026, 7, 11, tzinfo=timezone.utc))
         self.assertEqual(len(result.items), 1)
         self.assertEqual(result.items[0].kind, "task")
@@ -55,6 +78,10 @@ class AnalysisTests(unittest.TestCase):
         segments = [Segment(id="s3", sequence_no=0, start_ms=0, end_ms=1000, text="You need to understand yourself and you will enjoy it.")]
         result = analyze_rules(segments, datetime(2026, 7, 11, tzinfo=timezone.utc))
         self.assertEqual(result.items, [])
+
+    def test_third_person_future_statement_is_not_a_task(self):
+        self.assertIsNone(ENGLISH_TASK_RE.search("Dana will be offline next week."))
+        self.assertIsNotNone(ENGLISH_TASK_RE.search("I will send the report tomorrow."))
 
     def test_meeting_without_date_requires_review(self):
         segments = [Segment(id="s4", sequence_no=0, start_ms=0, end_ms=1000, text="Let's have a meeting about the launch.")]
@@ -88,6 +115,14 @@ class OllamaAnalysisTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.summary, "Useful summary")
         self.assertFalse(FakeOllamaClient.payload["think"])
         self.assertEqual(FakeOllamaClient.payload["messages"][0]["role"], "user")
+        self.assertEqual(FakeOllamaClient.payload["keep_alive"], "5m")
+
+    async def test_uses_the_explicit_source_time_instead_of_model_timezone_drift(self):
+        segments = [Segment(id="s1", sequence_no=0, start_ms=0, end_ms=1000, text="Let's have a launch meeting tomorrow at 14:00.")]
+        with patch.object(settings, "ollama_url", "http://ollama"), patch("app.analysis.httpx.AsyncClient", FakeDatedEventClient):
+            result = await analyze(segments, datetime(2026, 7, 11, tzinfo=timezone.utc), "")
+        self.assertEqual(result.items[0].kind, "event")
+        self.assertEqual(result.items[0].startsAt, "2026-07-12T14:00:00")
 
 
 if __name__ == "__main__":

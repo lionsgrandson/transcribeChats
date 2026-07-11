@@ -40,11 +40,16 @@ export function exportCsv(transcription: Transcription, items: ExtractedItem[]):
 }
 
 export function printPdf(transcription: Transcription, segments: TranscriptSegment[], items: ExtractedItem[]): void {
-  const popup = window.open('', '_blank', 'noopener,noreferrer');
-  if (!popup) throw new Error('Pop-up blocked');
+  const popup = window.open('about:blank', '_blank');
+  if (!popup) throw new Error('The PDF window was blocked. Allow pop-ups for this app and try again.');
+  popup.opener = null;
   const escape = (text: string) => text.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[character]!);
   const transcript = segments.map((segment) => `<p dir="auto"><b>${escape(formatTimestamp(segment.startMs))} · ${escape(segment.speakerLabel)}</b><br>${escape(segment.text)}</p>`).join('');
   const taskList = items.filter((item) => item.kind === 'task').map((item) => `<li dir="auto">${escape(item.title)}</li>`).join('');
-  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escape(transcription.title)}</title><style>body{font-family:Arial,'Noto Sans Hebrew',sans-serif;max-width:760px;margin:40px auto;color:#17172a;line-height:1.55}h1{font-size:28px}p{break-inside:avoid}small{color:#666}@media print{body{margin:18mm}}</style></head><body><h1 dir="auto">${escape(transcription.title)}</h1><small>${escape(new Date(transcription.recordedAt).toLocaleString())}</small>${transcription.summary ? `<h2>Summary</h2><p dir="auto">${escape(transcription.summary)}</p>` : ''}${taskList ? `<h2>Tasks</h2><ul>${taskList}</ul>` : ''}<h2>Transcript</h2>${transcript}<script>window.onload=()=>window.print()</script></body></html>`);
+  const noteList = items.filter((item) => item.kind === 'note' || item.kind === 'takeaway').map((item) => `<li dir="auto">${escape(item.title)}</li>`).join('');
+  const eventList = items.filter((item) => item.kind === 'event').map((item) => `<li dir="auto">${escape(item.title)}</li>`).join('');
+  const recordedDate = new Date(transcription.recordedAt);
+  const recordedLabel = Number.isFinite(recordedDate.getTime()) ? recordedDate.toLocaleString() : transcription.recordedAt;
+  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escape(transcription.title)}</title><style>body{font-family:Arial,'Noto Sans Hebrew',sans-serif;max-width:760px;margin:40px auto;color:#17172a;line-height:1.55}h1{font-size:28px}p,li{break-inside:avoid}small{color:#666}@page{margin:18mm}@media print{body{margin:0}}</style></head><body><h1 dir="auto">${escape(transcription.title)}</h1><small>${escape(recordedLabel)}</small>${transcription.summary ? `<h2>Summary</h2><p dir="auto">${escape(transcription.summary)}</p>` : ''}${taskList ? `<h2>Tasks</h2><ul>${taskList}</ul>` : ''}${eventList ? `<h2>Events</h2><ul>${eventList}</ul>` : ''}${noteList ? `<h2>Notes and takeaways</h2><ul>${noteList}</ul>` : ''}<h2>Transcript</h2>${transcript}<script>window.addEventListener('load',()=>setTimeout(()=>{window.focus();window.print()},250))</script></body></html>`);
   popup.document.close();
 }

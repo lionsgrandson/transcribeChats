@@ -54,9 +54,30 @@ interface AppStoreValue {
 
 const AppStoreContext = createContext<AppStoreValue | null>(null);
 
+function validDateOrUndefined(value?: string): string | undefined {
+  return value && Number.isFinite(new Date(value).getTime()) ? new Date(value).toISOString() : undefined;
+}
+
+function normalizeStoredItem(item: ExtractedItem): ExtractedItem {
+  return {
+    ...item,
+    title: typeof item.title === 'string' && item.title.trim() ? item.title : 'Untitled item',
+    status: ['needs_review', 'open', 'completed', 'dismissed'].includes(item.status) ? item.status : 'needs_review',
+    priority: ['none', 'low', 'medium', 'high', 'urgent'].includes(item.priority) ? item.priority : 'none',
+    startsAt: validDateOrUndefined(item.startsAt),
+    endsAt: validDateOrUndefined(item.endsAt),
+    dueAt: validDateOrUndefined(item.dueAt),
+    reminderAt: validDateOrUndefined(item.reminderAt),
+    tags: Array.isArray(item.tags) ? item.tags.filter((value): value is string => typeof value === 'string') : [],
+    sourceSegmentIds: Array.isArray(item.sourceSegmentIds) ? item.sourceSegmentIds.filter((value): value is string => typeof value === 'string') : [],
+    confidence: Number.isFinite(item.confidence) ? Math.max(0, Math.min(1, item.confidence)) : 0.7,
+    confirmed: Boolean(item.confirmed)
+  };
+}
+
 function makeItems(transcriptionId: string, result: AnalysisResult): ExtractedItem[] {
   const now = new Date().toISOString();
-  return result.items.map((item) => ({ ...item, id: createId(), transcriptionId, createdAt: now, updatedAt: now }));
+  return result.items.map((item) => normalizeStoredItem({ ...item, id: createId(), transcriptionId, createdAt: now, updatedAt: now }));
 }
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
@@ -86,7 +107,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setSettings(storedSettings || defaultSettings);
       setTranscriptions(storedTranscriptions);
       setSegments(storedSegments);
-      setItems(storedItems);
+      setItems(storedItems.map(normalizeStoredItem));
       setNotes(storedNotes);
       if (!storedSettings) await db.settings.put(defaultSettings);
       setError(undefined);
