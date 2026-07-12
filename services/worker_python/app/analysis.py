@@ -209,6 +209,7 @@ Transcript:\n{transcript}"""
             "messages": [{"role": "user", "content": prompt}],
             "format": schema,
             "stream": False,
+            "think": False,
             "keep_alive": "5m",
             "options": {"temperature": 0},
         })
