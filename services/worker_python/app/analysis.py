@@ -78,7 +78,7 @@ def _best_source_ids(item: AnalysisItem, segments: list[Segment]) -> list[str]:
     if not scored:
         return []
     score, source = max(scored, key=lambda value: value[0])
-    return [source]
+    return [source] if score > 0.0 else []
 
 
 def _merge_rule_items(result: Analysis, segments: list[Segment], conversation_date: datetime) -> None:
@@ -209,7 +209,6 @@ Transcript:\n{transcript}"""
             "messages": [{"role": "user", "content": prompt}],
             "format": schema,
             "stream": False,
-            "think": False,
             "keep_alive": "5m",
             "options": {"temperature": 0},
         })
