@@ -78,7 +78,7 @@ def _best_source_ids(item: AnalysisItem, segments: list[Segment]) -> list[str]:
     if not scored:
         return []
     score, source = max(scored, key=lambda value: value[0])
-    return [source]
+    return [source] if score > 0.0 else []
 
 
 def _ensure_meaningful_notes(result: Analysis, segments: list[Segment]) -> None:
