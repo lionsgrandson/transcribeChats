@@ -106,9 +106,10 @@ def _remove_action_only_notes(result: Analysis, segments: list[Segment]) -> None
         for item in result.items if item.kind in {"task", "event"}
         for source in item.sourceSegmentIds
     }
+    segment_map = {seg.id: seg.text for seg in segments if seg.id}
     kept: list[AnalysisItem] = []
     for item in result.items:
-        source_text = " ".join(segment.text for segment in segments if segment.id in item.sourceSegmentIds)
+        source_text = " ".join(segment_map[sid] for sid in item.sourceSegmentIds if sid in segment_map)
         action_only_note = (
             item.kind in {"note", "takeaway", "summary"}
             and bool(item.sourceSegmentIds)
