@@ -17,7 +17,7 @@ logger = logging.getLogger("transcribe-chats.worker")
 jobs: dict[str, TranscriptionJobStatus] = {}
 job_semaphore = asyncio.Semaphore(1)
 
-app = FastAPI(title="TranscribeChats Worker", version="0.4.0", docs_url="/docs")
+app = FastAPI(title="TranscribeChats Worker", version="0.6.0", docs_url="/docs")
 app.add_middleware(CORSMiddleware, allow_origins=settings.origins, allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["*"])
 
 
@@ -61,7 +61,7 @@ async def save_upload(file: UploadFile, suffix: str) -> Path:
 
 
 async def build_result(path: Path, language_mode: str, analyze: bool, recorded_at: str | None, context: str) -> TranscriptionResponse:
-    segments, languages, duration, used_diarization = await transcribe(path, language_mode)
+    segments, languages, duration, used_diarization = await transcribe(path, language_mode, context[:2000])
     if not segments:
         raise HTTPException(status_code=422, detail="No speech was detected in the media.")
     analysis_result = None

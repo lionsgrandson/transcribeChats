@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Segment(BaseModel):
@@ -30,6 +31,22 @@ class AnalysisItem(BaseModel):
     confidence: float = Field(default=0.7, ge=0, le=1)
     uncertaintyReason: str | None = None
     confirmed: bool = False
+
+    @field_validator("startsAt", "endsAt", "dueAt", "reminderAt", mode="before")
+    @classmethod
+    def normalize_optional_datetime(cls, value):
+        if value is None or value == "":
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            return parsed.isoformat()
+        except (TypeError, ValueError):
+            return None
+
+    @field_validator("tags", "sourceSegmentIds", mode="before")
+    @classmethod
+    def normalize_optional_lists(cls, value):
+        return value if isinstance(value, list) else []
 
 
 class Analysis(BaseModel):

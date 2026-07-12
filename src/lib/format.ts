@@ -19,11 +19,17 @@ export function formatTimestamp(ms: number): string {
 }
 
 export function formatDate(value: string, pattern = 'MMM d, yyyy'): string {
-  return format(new Date(value), pattern);
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? format(date, pattern) : 'Date unavailable';
 }
 
 export function relativeDate(value: string): string {
-  return formatDistanceToNow(new Date(value), { addSuffix: true });
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? formatDistanceToNow(date, { addSuffix: true }) : 'Date unavailable';
+}
+
+export function isValidDateValue(value?: string): value is string {
+  return Boolean(value && Number.isFinite(new Date(value).getTime()));
 }
 
 export function inferDirection(text: string): 'rtl' | 'ltr' {

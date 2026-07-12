@@ -44,7 +44,7 @@ interface AppStoreValue {
   addNote: (transcriptionId: string, body: string) => Promise<void>;
   deleteTranscription: (id: string) => Promise<void>;
   runAnalysis: (id: string) => Promise<void>;
-  runOllamaAnalysis: (id: string) => Promise<void>;
+  runOllamaAnalysis: (id: string) => Promise<AnalysisResult>;
   loadDemo: () => Promise<void>;
   clearData: () => Promise<void>;
   sync: () => Promise<void>;
@@ -54,9 +54,30 @@ interface AppStoreValue {
 
 const AppStoreContext = createContext<AppStoreValue | null>(null);
 
+function validDateOrUndefined(value?: string): string | undefined {
+  return value && Number.isFinite(new Date(value).getTime()) ? new Date(value).toISOString() : undefined;
+}
+
+function normalizeStoredItem(item: ExtractedItem): ExtractedItem {
+  return {
+    ...item,
+    title: typeof item.title === 'string' && item.title.trim() ? item.title : 'Untitled item',
+    status: ['needs_review', 'open', 'completed', 'dismissed'].includes(item.status) ? item.status : 'needs_review',
+    priority: ['none', 'low', 'medium', 'high', 'urgent'].includes(item.priority) ? item.priority : 'none',
+    startsAt: validDateOrUndefined(item.startsAt),
+    endsAt: validDateOrUndefined(item.endsAt),
+    dueAt: validDateOrUndefined(item.dueAt),
+    reminderAt: validDateOrUndefined(item.reminderAt),
+    tags: Array.isArray(item.tags) ? item.tags.filter((value): value is string => typeof value === 'string') : [],
+    sourceSegmentIds: Array.isArray(item.sourceSegmentIds) ? item.sourceSegmentIds.filter((value): value is string => typeof value === 'string') : [],
+    confidence: Number.isFinite(item.confidence) ? Math.max(0, Math.min(1, item.confidence)) : 0.7,
+    confirmed: Boolean(item.confirmed)
+  };
+}
+
 function makeItems(transcriptionId: string, result: AnalysisResult): ExtractedItem[] {
   const now = new Date().toISOString();
-  return result.items.map((item) => ({ ...item, id: createId(), transcriptionId, createdAt: now, updatedAt: now }));
+  return result.items.map((item) => normalizeStoredItem({ ...item, id: createId(), transcriptionId, createdAt: now, updatedAt: now }));
 }
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
@@ -86,7 +107,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setSettings(storedSettings || defaultSettings);
       setTranscriptions(storedTranscriptions);
       setSegments(storedSegments);
-      setItems(storedItems);
+      setItems(storedItems.map(normalizeStoredItem));
       setNotes(storedNotes);
       if (!storedSettings) await db.settings.put(defaultSettings);
       setError(undefined);
@@ -140,7 +161,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     const created = makeItems(transcriptionId, analysis);
     await db.transaction('rw', db.transcriptions, db.items, async () => {
       await db.transcriptions.update(transcriptionId, { summary: analysis.summary, updatedAt: new Date().toISOString() });
-      const replaceable = await db.items.where('transcriptionId').equals(transcriptionId).filter((item) => !item.confirmed && item.status === 'needs_review').primaryKeys();
+      const replaceable = await db.items.where('transcriptionId').equals(transcriptionId).filter((item) => !item.confirmed).primaryKeys();
       if (replaceable.length) await db.items.bulkDelete(replaceable);
       if (created.length) await db.items.bulkAdd(created);
     });
@@ -334,6 +355,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     await persistAnalysis(id, result);
     await reload();
     showToast('Ollama analysis completed. Review suggestions before accepting them.');
+    return result;
   }, [persistAnalysis, reload, settings.workerUrl, showToast]);
   const loadDemo = useCallback(async () => {
     await db.transaction('rw', db.transcriptions, db.segments, db.items, async () => {

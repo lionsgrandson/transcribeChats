@@ -7,6 +7,10 @@ import { useTranslation } from '../i18n/useTranslation';
 import { formatDuration } from '../lib/format';
 import { useAppStore } from '../state/AppStore';
 
+function localDateTimeInputValue(date = new Date()): string {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
 type Mode = 'record' | 'upload' | 'text';
 
 export function NewTranscriptionPage() {
@@ -19,7 +23,7 @@ export function NewTranscriptionPage() {
   const [title, setTitle] = useState('');
   const [languageMode, setLanguageMode] = useState<LanguageMode>(settings.languageMode);
   const [context, setContext] = useState('');
-  const [recordedAt, setRecordedAt] = useState(new Date().toISOString().slice(0, 16));
+  const [recordedAt, setRecordedAt] = useState(() => localDateTimeInputValue());
   const [text, setText] = useState('');
   const [file, setFile] = useState<File>();
   const [dragging, setDragging] = useState(false);
@@ -116,7 +120,7 @@ export function NewTranscriptionPage() {
           <Field label={t('title')}><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Weekly check-in" /></Field>
           <Field label={t('conversationDate')}><input type="datetime-local" value={recordedAt} onChange={(event) => setRecordedAt(event.target.value)} /></Field>
           <Field label={t('language')}><select value={languageMode} onChange={(event) => setLanguageMode(event.target.value as LanguageMode)}><option value="auto">{t('autoDetect')}</option><option value="en">{t('english')}</option><option value="he">{t('hebrew')}</option><option value="mixed">{t('mixed')}</option></select></Field>
-          <Field label={t('context')}><input value={context} onChange={(event) => setContext(event.target.value)} placeholder="Dana, Noam · product launch" dir="auto" /></Field>
+          <Field label={t('context')} hint={mode === 'text' ? 'Used by Ollama to understand names, roles, terminology, and intent. The pasted transcript itself is not rewritten.' : 'Whisper uses names and terms for spelling. Two or more names also guide local speaker separation and are assigned in first-detected-voice order; verify the labels afterward.'}><input value={context} onChange={(event) => setContext(event.target.value)} placeholder="People: Dana, Noam · Terms: Acme, Q3 launch" dir="auto" /></Field>
         </div>
         <div className="capture-panel">
           {mode === 'record' && <div className="record-panel">

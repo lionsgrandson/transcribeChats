@@ -4,13 +4,15 @@ TranscribeChats is an installable cross-platform PWA for bilingual Hebrew/Englis
 
 Project status: functional MVP implementation.
 
-Application version: `0.4.0`
+Application version: `0.7.0`
 
 Last updated: 2026-07-11
 
 ## Start here
 
 The complete product, architecture, database, API, UX, testing, and delivery plan is in [docs/IMPLEMENTATION_SPECIFICATION.md](docs/IMPLEMENTATION_SPECIFICATION.md).
+
+For hosted/local synchronization, authentication, migrations, storage, and every environment variable, follow [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md).
 
 ## Implemented stack
 
@@ -58,7 +60,7 @@ The application works without the worker for manual text, task/event extraction,
 
 Media file size is not a reliable estimate of transcription time; recording duration matters much more. A 27 MB video is not unusually large, but it can still contain a long recording. Version 0.3.0 runs faster-whisper on NVIDIA CUDA by default and uses GPU VRAM instead of placing the model workload on the CPU. FFmpeg decoding and application housekeeping can still use some CPU and system RAM.
 
-While the local engine runs, the progress percentage between upload and finalization is explicitly marked as an estimate and the app shows elapsed time. Ollama does not perform speech-to-text. It runs only when you press **Send to Ollama** after Whisper has produced a transcript, and the Whisper model is released first to avoid both models competing for GPU memory.
+While the local engine runs, the progress percentage between upload and finalization is explicitly marked as an estimate and the app shows elapsed time. Ollama does not perform speech-to-text. It runs only when you press **Analyze with Ollama** after Whisper has produced a transcript, and the Whisper model is released first to avoid both models competing for GPU memory.
 
 Automatic extraction is deliberately conservative. It creates review suggestions only for explicit commitments such as “Dana will send the file” and explicit meeting proposals such as “Let’s have a meeting.” An undated meeting stays in review and does not appear on the calendar until you add a date/time and accept it. Advice, predictions, and ordinary conversation are not converted to tasks. Tasks and events support individual editing/deletion plus checkbox-based multi-select deletion.
 
@@ -146,7 +148,7 @@ The implemented desktop path is an installable PWA: after installation, users la
    - Docker Desktop with WSL 2 integration for local audio/video transcription.
    - An NVIDIA GPU, current NVIDIA drivers, and Docker GPU support. This project is configured for CUDA 12 and cuDNN 9.
    - A modern Chromium-based browser such as Edge or Chrome for PWA installation.
-   - Ollama for the **Send to Ollama** button.
+   - Ollama for the **Analyze with Ollama** button.
    - Optional: Supabase CLI for local sync testing.
 
 2. Install dependencies and start the app stack.
@@ -191,7 +193,7 @@ The implemented desktop path is an installable PWA: after installation, users la
    npm.cmd start
    ```
 
-   Open a completed transcription and press **Send to Ollama**. LLM extraction is never automatic. Press **Send to ChatGPT** to copy/open the ChatGPT handoff instead. Ollama unloads the model after the response to reduce idle RAM and VRAM use.
+   Open a completed transcription and press **Analyze with Ollama**. LLM extraction is never automatic. Press **Open in ChatGPT** to copy/open the ChatGPT handoff instead. The first Ollama response can take one or two minutes while the model loads. The worker keeps the model warm for five minutes after a response so immediate follow-up analyses start faster.
 
 7. Control available features from the graphical Settings page.
 
@@ -237,9 +239,11 @@ VITE_WORKER_URL=http://localhost:8787
 
 Restart the Vite server. Sign in with a magic link from Settings, then use Sync now. The migration creates private workspaces, RLS policies, transcript/task/note tables, and a private media bucket.
 
-## Enable speaker diarization
+## Speaker diarization
 
-The base worker assigns `Speaker 1`. To enable actual anonymous speaker diarization, obtain access to the configured `pyannote` community model and set:
+The base worker includes lightweight local acoustic speaker separation without another model download. For best results, enter participant names as `People: Dana, Noam`; the detected voice clusters receive those names in first-heard order and should be reviewed afterward.
+
+For higher-quality pyannote diarization, obtain access to the configured community model and set:
 
 ```powershell
 $env:INSTALL_DIARIZATION='true'
@@ -249,18 +253,22 @@ docker compose build --no-cache transcription-worker
 docker compose up -d
 ```
 
-Speaker labels remain anonymous until the user renames them. The app never claims biometric identity.
+Without supplied names, local clusters use anonymous labels. The app never claims biometric identity, and names supplied as context are voice-cluster hints rather than biometric verification.
 
 ## Manual local LLM analysis
 
-Strict rules-based Hebrew/English extraction works by default. Ollama analysis happens only when you press **Send to Ollama**. Start the complete local stack with:
+Strict rules-based Hebrew/English extraction works by default. Ollama analysis happens only when you press **Analyze with Ollama**. Start the complete local stack with:
 
 ```powershell
 $env:OLLAMA_MODEL='qwen3.5:9b'
 npm.cmd start
 ```
 
-The worker releases Whisper from GPU memory before calling Ollama, and asks Ollama to unload its model after the response. This keeps peak GPU and system-memory use more predictable on an 8 GB GPU.
+The worker releases Whisper from GPU memory before calling Ollama and keeps the Ollama model warm for five minutes after a response. This avoids repeated model-loading delays while still releasing idle GPU memory automatically.
+
+## PDF export
+
+Open a completed transcription, choose **Export > PDF / Print**, then select **Save as PDF** in the operating-system print dialog. If no print dialog appears, allow pop-ups for `http://localhost:4173` and try again. The export includes the summary, tasks, events, notes/takeaways, and timestamped transcript with Hebrew bidirectional text support.
 
 ## Verification
 
@@ -286,11 +294,11 @@ The UI implements blank, filled, success, failure, and skeleton-loading states. 
 - Paste manual text and context.
 - Hebrew, English, mixed, or automatic language mode.
 - Auto and mixed modes keep Whisper multilingual, label each segment as Hebrew, English, or mixed, and avoid forcing the entire file into one detected language.
-- Timestamped editable transcript and editable speaker labels.
-- Optional speaker diarization.
+- Timestamped editable transcript, 0.5×–4× source-media playback, and editable speaker labels.
+- Built-in lightweight acoustic speaker separation, participant-name hints, and optional higher-quality pyannote diarization.
 - Conservative review-first tasks/events, editable and deletable task records, accepted calendar events, summaries, notes, takeaways, priorities, due dates, reminders, and tags.
 - Transcript, task, event timeline, summary, notes, calendar, and searchable-history views.
-- ChatGPT clipboard handoff, manual Ollama analysis, and validated preview-before-commit import.
+- ChatGPT clipboard handoff and manual Ollama analysis preserve segment IDs and start/end timestamps; imported items remain linked to playable source evidence.
 - Clickable source links jump to and highlight transcript evidence; timestamp play buttons seek the saved source media.
 - TXT, CSV, and browser-native PDF/print export with Hebrew bidi rendering.
 - Offline IndexedDB persistence, PWA installation, Supabase authentication, private media storage, RLS, and bidirectional sync.
@@ -315,4 +323,4 @@ Once application scaffolding creates `package.json` and `package-lock.json`, eve
 - Minor: backward-compatible features.
 - Major: breaking schema, API, sync, or user-workflow changes.
 
-The current `package.json` and `package-lock.json` both track application version `0.4.0`.
+The current `package.json` and `package-lock.json` both track application version `0.7.0`.

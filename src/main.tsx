@@ -7,7 +7,16 @@ import { AppErrorBoundary } from './components/AppErrorBoundary';
 import { AppStoreProvider } from './state/AppStore';
 import './styles.css';
 
-registerSW({ immediate: true });
+if (import.meta.env.DEV) {
+  if ('serviceWorker' in navigator) {
+    void navigator.serviceWorker.getRegistrations().then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())));
+  }
+  if ('caches' in window) {
+    void window.caches.keys().then((keys) => Promise.all(keys.filter((key) => /workbox|transcribe/i.test(key)).map((key) => window.caches.delete(key))));
+  }
+} else {
+  registerSW({ immediate: true });
+}
 
 createRoot(document.getElementById('root')!).render(
   <AppErrorBoundary>

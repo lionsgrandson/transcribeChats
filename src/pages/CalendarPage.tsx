@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, EmptyState, PageSkeleton } from '../components/ui';
 import { useTranslation } from '../i18n/useTranslation';
+import { isValidDateValue } from '../lib/format';
 import { useAppStore } from '../state/AppStore';
 
 export function CalendarPage() {
@@ -15,7 +16,7 @@ export function CalendarPage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkError, setBulkError] = useState('');
   const events = store.items.filter((item) => item.kind === 'event');
-  const dated = store.items.filter((item) => item.confirmed && item.status === 'open' && ((item.kind === 'event' && item.startsAt) || (item.kind === 'task' && item.dueAt))).sort((a, b) => new Date(a.startsAt || a.dueAt!).getTime() - new Date(b.startsAt || b.dueAt!).getTime());
+  const dated = store.items.filter((item) => item.confirmed && item.status === 'open' && ((item.kind === 'event' && isValidDateValue(item.startsAt)) || (item.kind === 'task' && isValidDateValue(item.dueAt)))).sort((a, b) => new Date(a.startsAt || a.dueAt!).getTime() - new Date(b.startsAt || b.dueAt!).getTime());
   const days = eachDayOfInterval({ start: startOfWeek(startOfMonth(cursor)), end: endOfWeek(endOfMonth(cursor)) });
   const byDay = new Map(days.map((day) => [format(day, 'yyyy-MM-dd'), dated.filter((item) => isSameDay(new Date(item.startsAt || item.dueAt!), day))]));
   if (store.loading) return <PageSkeleton />;
@@ -31,7 +32,7 @@ export function CalendarPage() {
     <Card className="event-manager">
       <div className="section-heading"><div><h2>Event management</h2><p>Select several event suggestions or accepted events and delete them together.</p></div>{events.length > 0 && <Button variant="danger" disabled={!selectedEvents.size || bulkBusy} onClick={() => void deleteSelectedEvents()}>{bulkBusy ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}Delete selected ({selectedEvents.size})</Button>}</div>
       {bulkError && <div className="banner banner-error" role="alert">{bulkError}</div>}
-      {events.length === 0 ? <EmptyState title="No event records" body="Explicit meeting proposals will appear here for review." /> : <><label className="bulk-select-all"><input type="checkbox" checked={events.every((item) => selectedEvents.has(item.id))} onChange={(event) => setSelectedEvents(event.target.checked ? new Set(events.map((item) => item.id)) : new Set())} /> Select all events</label><div className="event-management-list">{events.map((item) => <label className="event-management-row" key={item.id}><input className="bulk-checkbox" type="checkbox" checked={selectedEvents.has(item.id)} onChange={(event) => setSelectedEvents((current) => { const next = new Set(current); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; })} /><span className={`kind-dot kind-${item.kind}`} /><span><strong dir="auto">{item.title}</strong><small>{item.startsAt ? format(new Date(item.startsAt), 'PPp') : 'No date/time'} · {item.status === 'needs_review' ? 'Needs review' : item.status}</small></span></label>)}</div></>}
+      {events.length === 0 ? <EmptyState title="No event records" body="Explicit meeting proposals will appear here for review." /> : <><label className="bulk-select-all"><input type="checkbox" checked={events.every((item) => selectedEvents.has(item.id))} onChange={(event) => setSelectedEvents(event.target.checked ? new Set(events.map((item) => item.id)) : new Set())} /> Select all events</label><div className="event-management-list">{events.map((item) => <label className="event-management-row" key={item.id}><input className="bulk-checkbox" type="checkbox" checked={selectedEvents.has(item.id)} onChange={(event) => setSelectedEvents((current) => { const next = new Set(current); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; })} /><span className={`kind-dot kind-${item.kind}`} /><span><strong dir="auto">{item.title}</strong><small>{isValidDateValue(item.startsAt) ? format(new Date(item.startsAt), 'PPp') : 'No date/time'} · {item.status === 'needs_review' ? 'Needs review' : item.status}</small></span></label>)}</div></>}
     </Card>
     <Card className="calendar-card">
       <div className="calendar-toolbar"><div className="calendar-nav"><button className="icon-button" onClick={() => setCursor(addMonths(cursor, -1))}><ArrowLeft /></button><h2>{format(cursor, 'MMMM yyyy')}</h2><button className="icon-button" onClick={() => setCursor(addMonths(cursor, 1))}><ArrowRight /></button><Button variant="ghost" onClick={() => setCursor(new Date())}>{t('today')}</Button></div><div className="segmented-control compact"><button className={view === 'month' ? 'active' : ''} onClick={() => setView('month')}><CalendarDays size={15} />{t('month')}</button><button className={view === 'agenda' ? 'active' : ''} onClick={() => setView('agenda')}><List size={15} />{t('agenda')}</button></div></div>
