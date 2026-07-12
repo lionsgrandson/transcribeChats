@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.analysis import ENGLISH_TASK_RE, _best_source_ids, _ensure_meaningful_notes, analyze, analyze_rules  # noqa: E402
+from app.analysis import ENGLISH_TASK_RE, _best_source_ids, _ensure_meaningful_notes, _merge_rule_items, _remove_action_only_notes, analyze, analyze_rules  # noqa: E402
 from app.schemas import Analysis, AnalysisItem, Segment  # noqa: E402
 from app.settings import settings  # noqa: E402
 
@@ -82,6 +82,8 @@ class AnalysisTests(unittest.TestCase):
     def test_third_person_future_statement_is_not_a_task(self):
         self.assertIsNone(ENGLISH_TASK_RE.search("Dana will be offline next week."))
         self.assertIsNotNone(ENGLISH_TASK_RE.search("I will send the report tomorrow."))
+        self.assertIsNotNone(ENGLISH_TASK_RE.search("I need to ask my significant other about the chocolate factory."))
+        self.assertIsNotNone(ENGLISH_TASK_RE.search("Ask my significant other about the chocolate factory."))
 
     def test_meeting_without_date_requires_review(self):
         segments = [Segment(id="s4", sequence_no=0, start_ms=0, end_ms=1000, text="Let's have a meeting about the launch.")]
@@ -105,6 +107,26 @@ class AnalysisTests(unittest.TestCase):
         _ensure_meaningful_notes(result, segments)
         self.assertEqual(result.items[0].kind, "note")
         self.assertEqual(result.items[0].sourceSegmentIds, ["s1"])
+
+    def test_enriches_a_sparse_event_only_result_with_strict_tasks_and_notes(self):
+        segments = [
+            Segment(id="s1", sequence_no=0, start_ms=0, end_ms=1000, text="Amit's birthday and cancer anniversary are important family dates to remember."),
+            Segment(id="s2", sequence_no=1, start_ms=1000, end_ms=2000, text="I need to ask my significant other about the chocolate factory."),
+            Segment(id="s3", sequence_no=2, start_ms=2000, end_ms=3000, text="Let's have a family meeting tomorrow at 14:00."),
+        ]
+        result = Analysis(summary="Family planning", items=[
+            AnalysisItem(kind="event", title="Family meeting", sourceSegmentIds=["s3"]),
+            AnalysisItem(kind="note", title="Chocolate factory inquiry", sourceSegmentIds=["s2"]),
+        ])
+        _merge_rule_items(result, segments, datetime(2026, 7, 12, tzinfo=timezone.utc))
+        _remove_action_only_notes(result, segments)
+        _ensure_meaningful_notes(result, segments)
+        self.assertEqual(len([item for item in result.items if item.kind == "event"]), 1)
+        self.assertEqual(len([item for item in result.items if item.kind == "task"]), 1)
+        notes = [item for item in result.items if item.kind == "note"]
+        self.assertGreaterEqual(len(notes), 1)
+        self.assertEqual(notes[0].sourceSegmentIds, ["s1"])
+        self.assertFalse(any(item.sourceSegmentIds == ["s2"] for item in notes))
 
 
 class OllamaAnalysisTests(unittest.IsolatedAsyncioTestCase):
