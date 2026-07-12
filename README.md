@@ -4,9 +4,9 @@ TranscribeChats is an installable cross-platform PWA for bilingual Hebrew/Englis
 
 Project status: functional MVP implementation.
 
-Application version: `0.7.0`
+Application version: `0.8.0`
 
-Last updated: 2026-07-11
+Last updated: 2026-07-12
 
 ## Start here
 
@@ -266,6 +266,10 @@ npm.cmd start
 
 The worker releases Whisper from GPU memory before calling Ollama and keeps the Ollama model warm for five minutes after a response. This avoids repeated model-loading delays while still releasing idle GPU memory automatically.
 
+Ollama results are enriched conservatively after generation. Explicit commitments and direct requests missed by the model are restored as review-required tasks, while uncovered substantive topics become sourced notes. AI-extracted notes appear directly in the **Notes** tab and remain editable, deletable, and linked to their transcript source.
+
+When importing ChatGPT JSON, invalid optional date strings no longer discard the entire task or note. The item is imported without that date so you can add or correct it in the app. Ask ChatGPT to return exact ISO 8601 dates or `null`; natural-language values such as `next weekend` are intentionally treated as no date.
+
 ## PDF export
 
 Open a completed transcription, choose **Export > PDF / Print**, then select **Save as PDF** in the operating-system print dialog. If no print dialog appears, allow pop-ups for `http://localhost:4173` and try again. The export includes the summary, tasks, events, notes/takeaways, and timestamped transcript with Hebrew bidirectional text support.
@@ -323,4 +327,4 @@ Once application scaffolding creates `package.json` and `package-lock.json`, eve
 - Minor: backward-compatible features.
 - Major: breaking schema, API, sync, or user-workflow changes.
 
-The current `package.json` and `package-lock.json` both track application version `0.7.0`.
+The current `package.json` and `package-lock.json` both track application version `0.8.0`.

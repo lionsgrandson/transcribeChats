@@ -7,12 +7,12 @@ import httpx
 from .schemas import Analysis, AnalysisItem, Segment
 from .settings import settings
 
-ACTION_VERBS = r"(?:send|call|email|schedule|book|prepare|deliver|finish|update|review|follow\s+up|pay|buy|submit|upload|create|fix|contact|share|write)"
-ENGLISH_TASK_RE = re.compile(rf"\b(?:(?:i|we)\s+(?:will|shall|must|have\s+to|am\s+going\s+to|are\s+going\s+to|committed\s+to)|you\s+(?:must|have\s+to)|(?:please|can\s+you|could\s+you))\s+{ACTION_VERBS}\b", re.I)
+ACTION_VERBS = r"(?:ask|send|call|email|schedule|book|prepare|deliver|finish|complete|update|review|check|confirm|arrange|organize|handle|research|draft|test|investigate|remind|follow\s+up|pay|buy|submit|upload|create|fix|contact|share|write|do|make)"
+ENGLISH_TASK_RE = re.compile(rf"(?:\b(?:(?:i|we)\s+(?:will|shall|must|have\s+to|need\s+to|am\s+going\s+to|are\s+going\s+to|committed\s+to)|you\s+(?:must|have\s+to|need\s+to)|(?:please|can\s+you|could\s+you))\s+{ACTION_VERBS}\b|^\s*(?:please\s+)?{ACTION_VERBS}\b)", re.I)
 HEBREW_TASK_RE = re.compile(r"(?:אני|אנחנו)\s+(?:אשלח|נשלח|אתקשר|נתקשר|אכין|נכין|אסיים|נסיים|אעדכן|נעדכן|אקבע|נקבע|אטפל|נטפל)|(?:בבקשה|נא)\s+(?:שלח|תשלח|התקשר|תתקשר|תכין|תעדכן|תקבע)", re.I)
 MEETING_RE = re.compile(r"\b(?:let'?s|we\s+will|can\s+we|please)\s+(?:(?:have|schedule|book)\s+)?(?:a\s+)?(?:meeting|call|appointment)\b|\b(?:schedule|book)\s+(?:a\s+)?(?:meeting|call|appointment)\b|(?:בואו?|נקבע)\s+(?:פגישה|ישיבה|שיחה)", re.I)
 DECISION_RE = re.compile(r"\b(?:we\s+decided|we\s+agreed|decision:)\b|(?:החלטנו|סיכמנו)", re.I)
-NOTE_SIGNAL_RE = re.compile(r"\b(?:offline|unavailable|birthday|blocked|blocker|risk|important|remember|status|waiting|depends?|preference|decided|agreed)\b|(?:לא זמין|יום הולדת|חסום|סיכון|חשוב|לזכור|סטטוס|החלטנו|סיכמנו)", re.I)
+NOTE_SIGNAL_RE = re.compile(r"\b(?:offline|unavailable|birthday|anniversary|family|trip|travel|transportation|timing|schedule|vacation|blocked|blocker|risk|important|remember|status|waiting|depends?|preference|decided|agreed)\b|(?:לא זמין|יום הולדת|יום נישואין|משפחה|נסיעה|תחבורה|חסום|סיכון|חשוב|לזכור|סטטוס|החלטנו|סיכמנו)", re.I)
 
 
 def _date(text: str, reference: datetime) -> str | None:
@@ -81,22 +81,91 @@ def _best_source_ids(item: AnalysisItem, segments: list[Segment]) -> list[str]:
     return [source]
 
 
+def _merge_rule_items(result: Analysis, segments: list[Segment], conversation_date: datetime) -> None:
+    for candidate in analyze_rules(segments, conversation_date).items:
+        candidate_sources = set(candidate.sourceSegmentIds)
+        duplicate = any(
+            item.kind == candidate.kind and candidate_sources.intersection(item.sourceSegmentIds)
+            for item in result.items
+        )
+        if not duplicate:
+            result.items.append(candidate)
+
+
+def _similar_text(left: str, right: str) -> bool:
+    left_tokens = _tokens(left)
+    right_tokens = _tokens(right)
+    if not left_tokens or not right_tokens:
+        return False
+    return len(left_tokens & right_tokens) / min(len(left_tokens), len(right_tokens)) >= 0.7
+
+
+def _remove_action_only_notes(result: Analysis, segments: list[Segment]) -> None:
+    action_sources = {
+        source
+        for item in result.items if item.kind in {"task", "event"}
+        for source in item.sourceSegmentIds
+    }
+    kept: list[AnalysisItem] = []
+    for item in result.items:
+        source_text = " ".join(segment.text for segment in segments if segment.id in item.sourceSegmentIds)
+        action_only_note = (
+            item.kind in {"note", "takeaway", "summary"}
+            and bool(item.sourceSegmentIds)
+            and set(item.sourceSegmentIds).issubset(action_sources)
+            and bool(ENGLISH_TASK_RE.search(source_text) or HEBREW_TASK_RE.search(source_text) or MEETING_RE.search(source_text))
+            and not NOTE_SIGNAL_RE.search(source_text)
+        )
+        if not action_only_note:
+            kept.append(item)
+    result.items = kept
+
+
 def _ensure_meaningful_notes(result: Analysis, segments: list[Segment]) -> None:
-    if result.items:
-        return
-    candidates = [segment for segment in segments if segment.id and len(_tokens(segment.text)) >= 5]
-    signaled = [segment for segment in candidates if NOTE_SIGNAL_RE.search(segment.text)]
-    selected = signaled[:3]
-    if not selected and sum(len(segment.text) for segment in candidates) >= 160:
-        selected = sorted(candidates, key=lambda segment: len(segment.text), reverse=True)[:2]
-    for segment in selected:
-        result.items.append(AnalysisItem(
+    existing_notes = [item for item in result.items if item.kind in {"note", "takeaway", "summary"}]
+    candidates: list[tuple[int, int, Segment, str]] = []
+    for segment in segments:
+        if not segment.id:
+            continue
+        sentences = list(filter(None, re.split(r"(?<=[.!?])\s+|\n+", segment.text.strip())))
+        for sentence in sentences:
+            token_count = len(_tokens(sentence))
+            if token_count < 5 or ENGLISH_TASK_RE.search(sentence) or HEBREW_TASK_RE.search(sentence) or MEETING_RE.search(sentence):
+                continue
+            signaled = bool(NOTE_SIGNAL_RE.search(sentence) or DECISION_RE.search(sentence))
+            if signaled or token_count >= 9:
+                candidates.append((1 if signaled else 0, token_count, segment, sentence))
+
+    candidates.sort(key=lambda value: (value[0], value[1]), reverse=True)
+    for _, _, segment, sentence in candidates:
+        if len(existing_notes) >= 12:
+            break
+        if any(_similar_text(sentence, f"{item.title} {item.body or ''}") for item in existing_notes):
+            continue
+        note = AnalysisItem(
             kind="note",
-            title=segment.text.strip()[:180],
-            body=segment.text.strip(),
+            title=sentence.strip()[:180],
+            body=sentence.strip(),
             status="open",
             priority="none",
             sourceSegmentIds=[segment.id],
+            confidence=0.62,
+            confirmed=False,
+        )
+        result.items.append(note)
+        existing_notes.append(note)
+
+    if existing_notes or not segments:
+        return
+    fallback = max((segment for segment in segments if segment.id), key=lambda segment: len(segment.text), default=None)
+    if fallback and len(_tokens(fallback.text)) >= 5:
+        result.items.append(AnalysisItem(
+            kind="note",
+            title=fallback.text.strip()[:180],
+            body=fallback.text.strip(),
+            status="open",
+            priority="none",
+            sourceSegmentIds=[fallback.id],
             confidence=0.62,
             confirmed=False,
         ))
@@ -120,11 +189,14 @@ Rules:
 - Preserve a meeting proposal without a date as needs_review with startsAt null. Never invent a date or time.
 - Every task/event must be needs_review and confirmed=false.
 - Every extracted item must include sourceSegmentIds using only the exact segment `id` values shown in the transcript.
-- Extract important factual notes and explicit decisions as note/takeaway items. This includes availability, birthdays, status updates, blockers, risks, preferences, ownership information, reminders, and facts someone would want to find later.
+- Extract important factual notes and explicit decisions as note/takeaway items. This includes family plans, travel and transportation details, birthdays, anniversaries, availability, status updates, blockers, risks, preferences, ownership information, reminders, and facts someone would want to find later.
 - A date, factual statement, or general recommendation is a note, not a task. A task requires an explicit commitment or direct request for a concrete action.
+- Notes are first-class output. Return a separate sourced note for every distinct useful topic even when tasks or events also exist. One event is not a complete result for a multi-topic transcript.
 - For a substantive transcript, return useful notes even when there are no tasks or events. Do not return an empty items list merely because nothing is actionable.
 - Return a useful concise summary even when there are no actionable items.
 - Dated tasks and events create the timeline. Never invent dates.
+- Every date field must contain an exact ISO 8601 value or null. Never put natural-language dates such as "tomorrow" or "next weekend" in a date field.
+- Put the overall summary only in the top-level summary field; do not create an item with kind summary.
 - Use participant names and domain terms from Context only when supported by the transcript.
 - Output only JSON matching this schema: {json.dumps(schema, ensure_ascii=False)}
 
@@ -147,7 +219,7 @@ Transcript:\n{transcript}"""
         if not content:
             raise RuntimeError(f"Ollama returned no final analysis (reason: {payload.get('done_reason', 'unknown')}).")
         result = Analysis.model_validate_json(content)
-        _ensure_meaningful_notes(result, segments)
+        _merge_rule_items(result, segments, conversation_date)
         for item in result.items:
             item.sourceSegmentIds = _best_source_ids(item, segments)
             source_text = " ".join(segment.text for segment in segments if segment.id in item.sourceSegmentIds)
@@ -155,6 +227,9 @@ Transcript:\n{transcript}"""
                 item.kind = "note"
                 item.assignee = None
                 item.dueAt = None
+                item.priority = "none"
+            if item.kind == "summary":
+                item.kind = "note"
                 item.priority = "none"
             item.confirmed = False
             if item.kind in {"task", "event"}:
@@ -174,6 +249,8 @@ Transcript:\n{transcript}"""
                     item.startsAt = source_starts_at
             if item.kind == "event" and not item.startsAt and not item.uncertaintyReason:
                 item.uncertaintyReason = "Add a date and time before accepting this event into the calendar."
+        _remove_action_only_notes(result, segments)
+        _ensure_meaningful_notes(result, segments)
         if not result.summary.strip():
             result.summary = " ".join(segment.text.strip() for segment in segments[:4])[:800]
         return result
