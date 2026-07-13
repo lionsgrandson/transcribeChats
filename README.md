@@ -4,9 +4,9 @@ TranscribeChats is an installable cross-platform PWA for bilingual Hebrew/Englis
 
 Project status: functional MVP implementation.
 
-Application version: `0.8.0`
+Application version: `0.9.0`
 
-Last updated: 2026-07-12
+Last updated: 2026-07-13
 
 ## Start here
 
@@ -21,6 +21,7 @@ For hosted/local synchronization, authentication, migrations, storage, and every
 - A Dockerized Python worker using `faster-whisper`, FFmpeg, optional `pyannote.audio`, and optional Ollama analysis.
 - Dexie/IndexedDB for offline transcripts, media, tasks, events, notes, and preferences.
 - A provider-neutral analysis interface supporting a local LLM first and an optional hosted model later.
+- One-click transfer of extracted tasks into CodeCrafter CRM through a browser-only URL fragment; the CRM asks for the destination project and rejects duplicate source IDs.
 
 The repository originally recommended Flutter. The implementation uses the PWA option explicitly allowed by the requirements because Flutter/Dart are not installed in the delivery environment; this route produces a buildable and testable application now and avoids maintaining separate mobile/desktop UI stacks.
 
@@ -327,4 +328,4 @@ Once application scaffolding creates `package.json` and `package-lock.json`, eve
 - Minor: backward-compatible features.
 - Major: breaking schema, API, sync, or user-workflow changes.
 
-The current `package.json` and `package-lock.json` both track application version `0.8.0`.
+The current `package.json` and `package-lock.json` both track application version `0.9.0`.

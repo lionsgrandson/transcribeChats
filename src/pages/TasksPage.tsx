@@ -1,4 +1,4 @@
-import { CalendarClock, Check, Edit3, Filter, LoaderCircle, Plus, Save, Search, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { CalendarClock, Check, Edit3, ExternalLink, Filter, LoaderCircle, Plus, Save, Search, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, Card, EmptyState, Field, PageSkeleton, StatusBadge } from '../components/ui';
@@ -6,18 +6,44 @@ import type { ExtractedItem, Priority } from '../domain/types';
 import { useTranslation } from '../i18n/useTranslation';
 import { useAppStore } from '../state/AppStore';
 
-function TaskRow({ item, selected, onSelect, onUpdate, onDelete }: { item: ExtractedItem; selected: boolean; onSelect: (selected: boolean) => void; onUpdate: (patch: Partial<ExtractedItem>) => Promise<void>; onDelete: () => Promise<void> }) {
+type CrmTransferState = 'idle' | 'loading' | 'success' | 'failure';
+
+function encodeCrmTask(value: object): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  return btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join(''));
+}
+
+function TaskRow({ item, transcriptionTitle, selected, onSelect, onUpdate, onDelete }: { item: ExtractedItem; transcriptionTitle: string; selected: boolean; onSelect: (selected: boolean) => void; onUpdate: (patch: Partial<ExtractedItem>) => Promise<void>; onDelete: () => Promise<void> }) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(item.title);
   const [assignee, setAssignee] = useState(item.assignee || '');
   const [tags, setTags] = useState(item.tags.join(', '));
+  const [crmState, setCrmState] = useState<CrmTransferState>('idle');
   const save = async () => {
     if (!title.trim()) return;
     await onUpdate({ title: title.trim(), assignee: assignee.trim() || undefined, tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean) });
     setEditing(false);
   };
   const cancel = () => { setTitle(item.title); setAssignee(item.assignee || ''); setTags(item.tags.join(', ')); setEditing(false); };
+  const sendToCrm = () => {
+    setCrmState('loading');
+    try {
+      const priorities = { none: 'Medium', low: 'Low', medium: 'Medium', high: 'High', urgent: 'Urgent' } as const;
+      const payload = encodeCrmTask({
+        title: item.title, notes: item.body || '', dueDate: item.dueAt?.slice(0, 10), reminderAt: item.reminderAt,
+        priority: priorities[item.priority], sourceId: item.id, sourceLabel: `${transcriptionTitle} · transcribeChats`
+      });
+      const crmUrl = (import.meta.env.VITE_CODECRAFTER_CRM_URL || 'https://codecraftercrm.netlify.app/').replace(/\/$/, '');
+      const opened = window.open(`${crmUrl}/#importTask=${encodeURIComponent(payload)}`, '_blank');
+      if (!opened) throw new Error('Your browser blocked the CRM tab.');
+      opened.opener = null;
+      setCrmState('success');
+      window.setTimeout(() => setCrmState('idle'), 3000);
+    } catch {
+      setCrmState('failure');
+    }
+  };
 
   return <div className={`task-row ${item.status === 'completed' ? 'is-completed' : ''}`}>
     <input className="bulk-checkbox" type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} aria-label={`Select ${item.title}`} />
@@ -29,6 +55,7 @@ function TaskRow({ item, selected, onSelect, onUpdate, onDelete }: { item: Extra
     <input className="date-inline" type="datetime-local" value={item.dueAt?.slice(0, 16) || ''} onChange={(event) => void onUpdate({ dueAt: event.target.value ? new Date(event.target.value).toISOString() : undefined })} aria-label="Due date" />
     <div className="task-actions">
       {item.status === 'needs_review' && <Button onClick={() => void onUpdate({ status: 'open', confirmed: true })}>{t('accept')}</Button>}
+      <button className={`crm-transfer ${crmState}`} onClick={sendToCrm} disabled={crmState === 'loading'} aria-label={`Send ${item.title} to CodeCrafter CRM`} title={crmState === 'failure' ? 'CRM could not be opened. Click to retry.' : 'Choose a CRM project and import this task'}>{crmState === 'loading' ? <LoaderCircle className="spin" size={14} /> : crmState === 'success' ? <Check size={14} /> : <ExternalLink size={14} />}<span>{crmState === 'success' ? 'CRM opened' : crmState === 'failure' ? 'Retry CRM' : 'Send to CRM'}</span></button>
       {editing ? <><button className="icon-button compact" onClick={() => void save()} aria-label={t('save')}><Save size={15} /></button><button className="icon-button compact" onClick={cancel} aria-label={t('cancel')}><X size={15} /></button></> : <button className="icon-button compact" onClick={() => setEditing(true)} aria-label={t('edit')}><Edit3 size={15} /></button>}
       <button className="icon-button compact danger-icon" onClick={() => { if (confirm(`Delete task "${item.title}"?`)) void onDelete(); }} aria-label={t('delete')}><Trash2 size={15} /></button>
     </div>
@@ -79,7 +106,7 @@ export function TasksPage() {
     catch (reason) { setBulkError(reason instanceof Error ? reason.message : 'Could not delete the selected tasks.'); }
     finally { setBulkBusy(false); }
   };
-  const renderTask = (item: ExtractedItem) => <TaskRow key={item.id} item={item} selected={selected.has(item.id)} onSelect={(value) => toggleSelected(item.id, value)} onUpdate={(patch) => store.updateItem(item.id, patch)} onDelete={() => store.deleteItem(item.id)} />;
+  const renderTask = (item: ExtractedItem) => <TaskRow key={item.id} item={item} transcriptionTitle={store.transcriptions.find((transcription) => transcription.id === item.transcriptionId)?.title || 'Transcription'} selected={selected.has(item.id)} onSelect={(value) => toggleSelected(item.id, value)} onUpdate={(patch) => store.updateItem(item.id, patch)} onDelete={() => store.deleteItem(item.id)} />;
 
   return <div className="page">
     <header className="page-header"><div><span className="eyebrow"><Check size={14} />{t('actionCenter')}</span><h1>{t('tasks')}</h1><p>{t('tasksSubtitle')}</p></div><Button onClick={() => setShowAdd((value) => !value)}><Plus size={17} />{t('addTask')}</Button></header>

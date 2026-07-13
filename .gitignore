@@ -15,3 +15,4 @@ services/worker_python/.venv/
 services/worker_python/.models/
 services/worker_python/.cache/
 supabase/.temp/
+.transcribechats-changes.txt
