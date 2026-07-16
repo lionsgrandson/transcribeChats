@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ExtractedItem, TranscriptSegment, Transcription } from '../domain/types';
-import { printPdf } from './exports';
+import { allTasksAsCsv, printPdf } from './exports';
 
 const transcription: Transcription = {
   id: 't1',
@@ -46,5 +46,15 @@ describe('printPdf', () => {
   it('reports a blocked print window', () => {
     vi.spyOn(window, 'open').mockReturnValue(null);
     expect(() => printPdf(transcription, segments, items)).toThrow('Allow pop-ups');
+  });
+});
+
+describe('allTasksAsCsv', () => {
+  it('exports all tasks with their source transcription and spreadsheet-safe values', () => {
+    const task = { ...items[0], kind: 'task' as const, title: '=SUM(A1:A2)', body: 'Follow up' };
+    const csv = allTasksAsCsv([task], [transcription]);
+    expect(csv).toContain('"transcription"');
+    expect(csv).toContain('"PDF export test"');
+    expect(csv).toContain('"\'=SUM(A1:A2)"');
   });
 });

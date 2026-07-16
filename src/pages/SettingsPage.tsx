@@ -1,5 +1,5 @@
 import type { User as SupabaseUser } from '@supabase/supabase-js';
-import { AlertCircle, Bell, CheckCircle2, Cloud, Database, Download, Globe2, HardDrive, Languages, LogOut, RefreshCw, Server, Shield, Trash2, User } from 'lucide-react';
+import { AlertCircle, Bell, CheckCircle2, Cloud, Database, Download, Globe2, HardDrive, Languages, Link2, LogOut, RefreshCw, Server, Shield, Trash2, User } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button, Card, Field, PageSkeleton, Skeleton, SuccessBanner } from '../components/ui';
 import type { LanguageMode, Locale } from '../domain/types';
@@ -20,6 +20,8 @@ export function SettingsPage() {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent>();
+  const [crmTestState, setCrmTestState] = useState<'blank' | 'filled' | 'loading' | 'success' | 'failure'>(store.settings.crmWebhookUrl && store.settings.crmApiToken ? 'filled' : 'blank');
+  const [crmTestMessage, setCrmTestMessage] = useState(store.settings.crmWebhookUrl && store.settings.crmApiToken ? 'CRM settings are filled and ready to test.' : 'Choose a CRM, then paste its webhook endpoint and API token.');
 
   const engineCopy = locale === 'he' ? {
     title: 'מנוע התמלול',
@@ -106,6 +108,17 @@ export function SettingsPage() {
     }
   };
 
+  const testCrm = async () => {
+    setCrmTestState('loading'); setCrmTestMessage('Testing the selected CRM connection…');
+    try {
+      const token = store.settings.crmApiToken.trim();
+      const response = await fetch(store.settings.crmWebhookUrl.trim(), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: token.toLowerCase().startsWith('bearer ') ? token : `Bearer ${token}` }, body: JSON.stringify({ schemaVersion: 2, eventType: 'crm.connection.test', occurredAt: new Date().toISOString(), provider: store.settings.crmProvider }) });
+      const result = await response.json().catch(() => ({})) as { accepted?: boolean; error?: string };
+      if (!response.ok || !result.accepted) throw new Error(result.error || `CRM returned HTTP ${response.status}.`);
+      setCrmTestState('success'); setCrmTestMessage('The CRM accepted the test. Future task transfers will use this connection.');
+    } catch (reason) { setCrmTestState('failure'); setCrmTestMessage(reason instanceof Error ? reason.message : 'CRM connection failed.'); }
+  };
+
   return (
     <div className="page page-settings">
       <header className="page-header">
@@ -117,6 +130,7 @@ export function SettingsPage() {
           <a href="#language"><Languages />{t('languageAndDirection')}</a>
           <a href="#processing"><Server />{engineCopy.title}</a>
           <a href="#sync"><Cloud />{t('cloudSync')}</a>
+          <a href="#crm"><Link2 />CRM</a>
           <a href="#notifications"><Bell />{t('notifications')}</a>
           <a href="#storage"><Database />{t('storageData')}</a>
         </nav>
@@ -149,6 +163,16 @@ export function SettingsPage() {
             <div className="settings-heading"><span><Cloud /></span><div><h2>{t('cloudSync')}</h2><p>{t('cloudSyncBody')}</p></div></div>
             {supabaseConfigured ? user ? <div className="account-card"><span><User /></span><div><strong>{user.email}</strong><small>{t('signedIn')}</small></div><Button variant="secondary" onClick={() => void signOut().then(() => setUser(null))}><LogOut size={16} />{t('signOut')}</Button></div> : <div className="auth-form"><Field label={t('email')}><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" dir="ltr" /></Field><Button busy={busy} disabled={!email} onClick={() => void magicLink()}>{t('sendMagicLink')}</Button></div> : <div className="banner banner-neutral">{t('supabaseNotConfigured')}</div>}
             <div className="setting-row"><div><strong>{t('crossDeviceSync')}</strong><span>{store.settings.lastSyncAt ? new Date(store.settings.lastSyncAt).toLocaleString() : t('notSynced')}</span></div><Button busy={busy} disabled={!supabaseConfigured || !user} onClick={() => void doSync()}><RefreshCw size={16} />{t('syncNow')}</Button></div>
+          </Card>
+
+          <Card className="settings-section" id="crm">
+            <div className="settings-heading"><span><Link2 /></span><div><h2>CRM connection</h2><p>Choose the CRM used by this copy of transcribeChats. Credentials stay on this device.</p></div></div>
+            <div className={`banner ${crmTestState === 'failure' ? 'banner-error' : crmTestState === 'success' ? 'banner-success' : 'banner-neutral'}`}>{crmTestState === 'loading' ? <RefreshCw className="spin" /> : crmTestState === 'failure' ? <AlertCircle /> : crmTestState === 'success' ? <CheckCircle2 /> : <Link2 />}<div><strong>{crmTestState === 'blank' ? 'Blank connection' : crmTestState === 'filled' ? 'Connection filled' : crmTestState === 'loading' ? 'Testing connection' : crmTestState === 'success' ? 'CRM connected' : 'CRM connection failed'}</strong><span>{crmTestMessage}</span></div></div>
+            <div className="setting-row"><div><strong>Enable CRM sync</strong><span>Show and use direct CRM transfer actions.</span></div><label className="switch"><input type="checkbox" checked={store.settings.crmEnabled} onChange={(event) => void store.updateSettings({ crmEnabled: event.target.checked })} /><span /></label></div>
+            <Field label="CRM type"><select value={store.settings.crmProvider} onChange={(event) => void store.updateSettings({ crmProvider: event.target.value as typeof store.settings.crmProvider })}><option value="codecrafter">CodeCrafter CRM</option><option value="creativecrm">CreativeCRM</option><option value="compatible">CodeCrafter-compatible CRM</option><option value="custom">Custom compatible webhook</option></select></Field>
+            <Field label="Webhook endpoint" hint="Copy this from Security & API in the selected CRM."><input type="url" value={store.settings.crmWebhookUrl} onChange={(event) => { void store.updateSettings({ crmWebhookUrl: event.target.value }); setCrmTestState(event.target.value && store.settings.crmApiToken ? 'filled' : 'blank'); }} placeholder="https://project.supabase.co/functions/v1/crm-ingest" dir="ltr" /></Field>
+            <Field label="API token" hint="Generate this in the selected CRM. The token is stored only in this app's local settings."><input type="password" value={store.settings.crmApiToken} onChange={(event) => { void store.updateSettings({ crmApiToken: event.target.value }); setCrmTestState(event.target.value && store.settings.crmWebhookUrl ? 'filled' : 'blank'); }} placeholder="cccrm_…" autoComplete="off" dir="ltr" /></Field>
+            <div className="inline-actions"><Button variant="secondary" busy={crmTestState === 'loading'} disabled={!store.settings.crmWebhookUrl || !store.settings.crmApiToken} onClick={() => void testCrm()}><Link2 size={16} />Test CRM connection</Button></div>
           </Card>
 
           <Card className="settings-section" id="notifications">

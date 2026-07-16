@@ -39,6 +39,20 @@ export function exportCsv(transcription: Transcription, items: ExtractedItem[]):
   download(`${transcription.title}-items.csv`, `\uFEFF${[headers, ...rows].map((row) => row.map(safeCell).join(',')).join('\r\n')}`, 'text/csv;charset=utf-8');
 }
 
+export function allTasksAsCsv(tasks: ExtractedItem[], transcriptions: Transcription[]): string {
+  const transcriptionNames = new Map(transcriptions.map((transcription) => [transcription.id, transcription.title]));
+  const headers = ['title', 'transcription', 'status', 'priority', 'assignee', 'due_at', 'reminder_at', 'notes', 'tags', 'source_id'];
+  const rows = tasks.map((task) => [
+    task.title, transcriptionNames.get(task.transcriptionId) || 'Unknown transcription', task.status, task.priority,
+    task.assignee, task.dueAt, task.reminderAt, task.body, task.tags.join('|'), task.id,
+  ]);
+  return `\uFEFF${[headers, ...rows].map((row) => row.map(safeCell).join(',')).join('\r\n')}`;
+}
+
+export function exportAllTasksCsv(tasks: ExtractedItem[], transcriptions: Transcription[]): void {
+  download(`transcribechats-all-tasks-${new Date().toISOString().slice(0, 10)}.csv`, allTasksAsCsv(tasks, transcriptions), 'text/csv;charset=utf-8');
+}
+
 export function printPdf(transcription: Transcription, segments: TranscriptSegment[], items: ExtractedItem[]): void {
   const popup = window.open('about:blank', '_blank');
   if (!popup) throw new Error('The PDF window was blocked. Allow pop-ups for this app and try again.');

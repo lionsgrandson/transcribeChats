@@ -96,6 +96,10 @@ export interface AppSettings {
   processingMode: 'local-worker' | 'supabase-worker';
   workerUrl: string;
   remindersEnabled: boolean;
+  crmEnabled: boolean;
+  crmProvider: 'codecrafter' | 'creativecrm' | 'compatible' | 'custom';
+  crmWebhookUrl: string;
+  crmApiToken: string;
   lastSyncAt?: string;
 }
 

@@ -38,5 +38,9 @@ export const defaultSettings: AppSettings = {
   languageMode: 'auto',
   processingMode: 'local-worker',
   workerUrl: import.meta.env.VITE_WORKER_URL || 'http://localhost:8787',
-  remindersEnabled: true
+  remindersEnabled: true,
+  crmEnabled: false,
+  crmProvider: 'codecrafter',
+  crmWebhookUrl: '',
+  crmApiToken: ''
 };

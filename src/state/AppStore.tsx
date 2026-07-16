@@ -104,7 +104,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         db.settings.get('settings'), db.transcriptions.orderBy('updatedAt').reverse().toArray(),
         db.segments.toArray(), db.items.toArray(), db.notes.toArray()
       ]);
-      setSettings(storedSettings || defaultSettings);
+      setSettings(storedSettings ? { ...defaultSettings, ...storedSettings } : defaultSettings);
       setTranscriptions(storedTranscriptions);
       setSegments(storedSegments);
       setItems(storedItems.map(normalizeStoredItem));

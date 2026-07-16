@@ -8,6 +8,7 @@ import type { AnalysisResult, ExtractedItem, Transcription, TranscriptSegment } 
 import { useTranslation } from '../i18n/useTranslation';
 import { formatDate, formatDuration, formatTimestamp, inferDirection } from '../lib/format';
 import { exportCsv, exportText, printPdf } from '../services/exports';
+import { sendTasksToCrm, toCrmTask } from '../services/crmTransfer';
 import { useAppStore } from '../state/AppStore';
 
 function EditableSegment({ segment, onSave, onPlay, highlighted }: { segment: TranscriptSegment; onSave: (text: string, speaker: string) => Promise<void>; onPlay: () => void; highlighted: boolean }) {
@@ -25,13 +26,9 @@ function EditableSegment({ segment, onSave, onPlay, highlighted }: { segment: Tr
 
 type CrmTransferState = 'idle' | 'loading' | 'success' | 'failure';
 
-function encodeCrmTask(value: object): string {
-  const bytes = new TextEncoder().encode(JSON.stringify(value));
-  return btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join(''));
-}
-
 function ItemRow({ item, transcriptionTitle, onUpdate, onDelete, onSource, onPlaySource }: { item: ExtractedItem; transcriptionTitle: string; onUpdate: (patch: Partial<ExtractedItem>) => Promise<void>; onDelete: () => Promise<void>; onSource: (segmentId: string) => void; onPlaySource: (segmentId: string) => void }) {
   const { t } = useTranslation();
+  const store = useAppStore();
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(item.title);
   const [kind, setKind] = useState(item.kind);
@@ -45,15 +42,10 @@ function ItemRow({ item, transcriptionTitle, onUpdate, onDelete, onSource, onPla
     await onUpdate({ title: title.trim(), kind, startsAt: kind === 'event' ? timestamp : undefined, dueAt: kind === 'task' ? timestamp : undefined });
     setEditing(false);
   };
-  const sendToCrm = () => {
+  const sendToCrm = async () => {
     setCrmState('loading');
     try {
-      const priorities = { none: 'Medium', low: 'Low', medium: 'Medium', high: 'High', urgent: 'Urgent' } as const;
-      const payload = encodeCrmTask({ title: item.title, notes: item.body || '', dueDate: item.dueAt?.slice(0, 10), reminderAt: item.reminderAt, priority: priorities[item.priority], sourceId: item.id, sourceLabel: `${transcriptionTitle} · transcribeChats` });
-      const crmUrl = (import.meta.env.VITE_CODECRAFTER_CRM_URL || 'https://codecraftercrm.netlify.app/').replace(/\/$/, '');
-      const opened = window.open(`${crmUrl}/#importTask=${encodeURIComponent(payload)}`, '_blank');
-      if (!opened) throw new Error('Your browser blocked the CRM tab.');
-      opened.opener = null;
+      await sendTasksToCrm([toCrmTask(item, transcriptionTitle)], store.settings);
       setCrmState('success');
       window.setTimeout(() => setCrmState('idle'), 3000);
     } catch {
@@ -64,7 +56,7 @@ function ItemRow({ item, transcriptionTitle, onUpdate, onDelete, onSource, onPla
     {item.kind === 'task' ? <button className={`task-checkbox ${item.status === 'completed' ? 'checked' : ''}`} onClick={() => void onUpdate({ status: item.status === 'completed' ? 'open' : 'completed', confirmed: true })} aria-label={item.status === 'completed' ? t('reopen') : t('complete')}>{item.status === 'completed' && <Check size={15} />}</button> : <span className={`kind-dot kind-${item.kind}`} />}
     <div className="item-main">{editing ? <div className="item-edit-grid"><input value={title} onChange={(event) => setTitle(event.target.value)} aria-label="Item title" dir="auto" /><select value={kind} onChange={(event) => setKind(event.target.value as ExtractedItem['kind'])} aria-label="Item type"><option value="task">{t('taskSingular')}</option><option value="event">{t('eventSingular')}</option><option value="note">{t('noteSingular')}</option><option value="takeaway">{t('takeawaySingular')}</option><option value="summary">{t('summary')}</option></select>{(kind === 'task' || kind === 'event') && <input type="datetime-local" value={date} onChange={(event) => setDate(event.target.value)} aria-label={kind === 'event' ? 'Event date and time' : 'Due date'} />}</div> : <><strong dir="auto">{item.title}</strong><div className="item-meta"><span>{kindLabel}</span>{item.assignee && <span>{item.assignee}</span>}{item.dueAt && <span><Clock size={13} />{formatDate(item.dueAt, 'MMM d, HH:mm')}</span>}{item.startsAt && <span><CalendarDays size={13} />{formatDate(item.startsAt, 'MMM d, HH:mm')}</span>}{item.priority !== 'none' && <span className={`priority priority-${item.priority}`}>{priorityLabel}</span>}</div>{item.uncertaintyReason && <span className="uncertainty"><AlertTriangle size={13} />{item.uncertaintyReason}</span>}</>}</div>
     {item.status === 'needs_review' && <div className="review-actions"><Button onClick={() => void onUpdate({ status: 'open', confirmed: true })}>{t('accept')}</Button><Button variant="ghost" onClick={() => void onUpdate({ status: 'dismissed' })}>{t('dismiss')}</Button></div>}
-    <div className="item-actions">{item.kind === 'task' && <button className={`crm-transfer ${crmState}`} onClick={sendToCrm} disabled={crmState === 'loading'} aria-label={`Send ${item.title} to CodeCrafter CRM`} title={crmState === 'failure' ? 'CRM could not be opened. Click to retry.' : 'Choose a CRM project and import this task'}>{crmState === 'loading' ? <LoaderCircle className="spin" size={14} /> : crmState === 'success' ? <Check size={14} /> : <ExternalLink size={14} />}<span>{crmState === 'success' ? 'CRM opened' : crmState === 'failure' ? 'Retry CRM' : 'Send to CRM'}</span></button>}{editing ? <><button className="icon-button compact" onClick={() => void save()} aria-label={t('save')}><Save size={15} /></button><button className="icon-button compact" onClick={() => setEditing(false)} aria-label={t('cancel')}><X size={15} /></button></> : <button className="icon-button compact" onClick={() => setEditing(true)} aria-label={t('edit')}><Edit3 size={15} /></button>}<button className="icon-button compact danger-icon" onClick={() => { if (confirm(`Delete “${item.title}”?`)) void onDelete(); }} aria-label={t('delete')}><Trash2 size={15} /></button>{item.sourceSegmentIds[0] && <><button className="evidence-link" onClick={() => onSource(item.sourceSegmentIds[0])}>{t('source')}</button><button className="evidence-link" onClick={() => onPlaySource(item.sourceSegmentIds[0])}><Play size={12} />Play source</button></>}</div>
+    <div className="item-actions">{item.kind === 'task' && <button className={`crm-transfer ${crmState}`} onClick={() => void sendToCrm()} disabled={crmState === 'loading'} aria-label={`Send ${item.title} to the selected CRM`} title={crmState === 'failure' ? 'CRM sync failed. Check Settings and retry.' : 'Send directly to the CRM selected in Settings'}>{crmState === 'loading' ? <LoaderCircle className="spin" size={14} /> : crmState === 'success' ? <Check size={14} /> : <ExternalLink size={14} />}<span>{crmState === 'success' ? 'CRM synced' : crmState === 'failure' ? 'Retry CRM' : 'Send to CRM'}</span></button>}{editing ? <><button className="icon-button compact" onClick={() => void save()} aria-label={t('save')}><Save size={15} /></button><button className="icon-button compact" onClick={() => setEditing(false)} aria-label={t('cancel')}><X size={15} /></button></> : <button className="icon-button compact" onClick={() => setEditing(true)} aria-label={t('edit')}><Edit3 size={15} /></button>}<button className="icon-button compact danger-icon" onClick={() => { if (confirm(`Delete “${item.title}”?`)) void onDelete(); }} aria-label={t('delete')}><Trash2 size={15} /></button>{item.sourceSegmentIds[0] && <><button className="evidence-link" onClick={() => onSource(item.sourceSegmentIds[0])}>{t('source')}</button><button className="evidence-link" onClick={() => onPlaySource(item.sourceSegmentIds[0])}><Play size={12} />Play source</button></>}</div>
   </div>;
 }
 
