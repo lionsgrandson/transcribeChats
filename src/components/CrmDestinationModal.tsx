@@ -62,20 +62,24 @@ export function CrmDestinationModal({
 
   const submit = async () => {
     setError('');
-    if (mode === 'existing') {
-      if (!clientId) return setError('Choose a client before syncing.');
-      await onSubmit({ contactId: clientId, projectId: projectId || undefined });
-      return;
+    try {
+      if (mode === 'existing') {
+        if (!clientId) return setError('Choose a client before syncing.');
+        await onSubmit({ contactId: clientId, projectId: projectId || undefined });
+        return;
+      }
+      if (!newName.trim()) return setError('Enter the new client name.');
+      await onSubmit({
+        newContact: {
+          name: newName.trim(),
+          company: newCompany.trim() || undefined,
+          email: newEmail.trim() || undefined,
+          phone: newPhone.trim() || undefined,
+        },
+      });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'CRM sync failed.');
     }
-    if (!newName.trim()) return setError('Enter the new client name.');
-    await onSubmit({
-      newContact: {
-        name: newName.trim(),
-        company: newCompany.trim() || undefined,
-        email: newEmail.trim() || undefined,
-        phone: newPhone.trim() || undefined,
-      },
-    });
   };
 
   return <Modal open={open} onClose={() => { if (!busy) onClose(); }} title="Send transcription to CRM" wide>
