@@ -152,6 +152,47 @@ async function sendLegacyTasks(tasks: CrmTaskPayload[], settings: AppSettings, w
 }
 
 /**
+ * Sends an entire transcription workspace in one request.
+ * This is the primary "Send all to CRM" flow from the transcription detail page.
+ * It works even when the transcript has no tasks.
+ */
+export async function sendTranscriptionToCrm(transcriptionId: string, settings: AppSettings): Promise<CrmTransferResult> {
+  const { webhookUrl, authorization } = validateSettings(settings);
+  const transcription = await db.transcriptions.get(transcriptionId);
+  if (!transcription) throw new Error('The transcription could not be found.');
+
+  const [workspaceItems, personalNotes] = await Promise.all([
+    db.items.where('transcriptionId').equals(transcriptionId).toArray(),
+    db.notes.where('transcriptionId').equals(transcriptionId).toArray(),
+  ]);
+  const activeItems = workspaceItems.filter((item) => item.status !== 'dismissed');
+  const tasks = activeItems.filter((item) => item.kind === 'task').map((item) => toCrmTask(item, transcription.title));
+  const events = activeItems
+    .filter((item) => item.kind === 'event')
+    .map(toCrmEvent)
+    .filter((event): event is CrmEventPayload => Boolean(event));
+
+  return postToCrm(webhookUrl, authorization, {
+    schemaVersion: 3,
+    provider: settings.crmProvider,
+    eventType: 'transcribeChats.client-workspace.imported',
+    occurredAt: new Date().toISOString(),
+    externalReference: `transcribeChats:${transcriptionId}:workspace`,
+    channel: 'transcribeChats',
+    contact: inferContact(transcription),
+    summary: workspaceNote(transcription, workspaceItems, personalNotes),
+    transcription: {
+      id: transcription.id,
+      title: transcription.title,
+      recordedAt: transcription.recordedAt,
+      detectedLanguages: transcription.detectedLanguages,
+    },
+    tasks,
+    events,
+  });
+}
+
+/**
  * Sends the selected task(s) plus the rest of their transcription workspace.
  * For CodeCrafter-compatible CRMs this means tasks, dated events/timeline,
  * summary and notes are attached to the same client card in one import.
