@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db, defaultSettings } from '../data/db';
 import type { ExtractedItem, Transcription } from '../domain/types';
-import { crmImportUrl, encodeCrmTasks, sendTasksToCrm, toCrmTask } from './crmTransfer';
+import { crmImportUrl, encodeCrmTasks, sendTasksToCrm, sendTranscriptionToCrm, toCrmTask } from './crmTransfer';
 
 const task: ExtractedItem = {
   id: 'task-1', transcriptionId: 'transcription-1', kind: 'task', title: 'שליחת הצעה', body: 'Include the revised scope.',
@@ -68,5 +68,34 @@ describe('CRM task transfer', () => {
     expect(payload.summary).toContain('Client prefers WhatsApp for urgent questions.');
     expect(payload.summary).toContain('Send the polished mockup before the review.');
     expect(payload.summary).toContain('Timeline');
+  });
+
+  it('sends the whole transcription workspace with one action even when there are no tasks', async () => {
+    const transcription: Transcription = {
+      id: 'transcription-2', title: 'Discovery call', sourceType: 'upload', status: 'ready', languageMode: 'en',
+      detectedLanguages: ['en'], recordedAt: '2026-08-24T10:00:00.000Z', createdAt: '2026-08-24T10:00:00.000Z',
+      updatedAt: '2026-08-24T10:30:00.000Z', context: 'Client: Example Client · Email: client@example.com',
+      summary: 'Discussed the new website and agreed to follow up next week.',
+    };
+    const takeaway: ExtractedItem = {
+      ...task, id: 'takeaway-2', transcriptionId: transcription.id, kind: 'takeaway', title: 'Client wants a simpler homepage',
+      body: 'The homepage should focus on one clear CTA.', priority: 'none', dueAt: undefined, status: 'open', confirmed: true,
+    };
+    await db.transcriptions.add(transcription);
+    await db.items.add(takeaway);
+    await db.notes.add({ id: 'personal-note-2', transcriptionId: transcription.id, body: 'Ask for brand assets.', createdAt: transcription.createdAt, updatedAt: transcription.updatedAt });
+
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ accepted: true, contactId: 'client-2', tasksCreated: 0, eventsCreated: 0 }), { status: 200 }));
+    const result = await sendTranscriptionToCrm(transcription.id, { ...defaultSettings, crmEnabled: true, crmProvider: 'codecrafter', crmWebhookUrl: 'https://crm.example/functions/v1/crm-ingest', crmApiToken: 'secret-token' });
+
+    expect(result).toMatchObject({ accepted: true, tasksCreated: 0, eventsCreated: 0, contactId: 'client-2' });
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    const payload = JSON.parse(String(request.body));
+    expect(payload.externalReference).toBe('transcribeChats:transcription-2:workspace');
+    expect(payload.tasks).toEqual([]);
+    expect(payload.events).toEqual([]);
+    expect(payload.summary).toContain('Discussed the new website');
+    expect(payload.summary).toContain('The homepage should focus on one clear CTA.');
+    expect(payload.summary).toContain('Ask for brand assets.');
   });
 });
