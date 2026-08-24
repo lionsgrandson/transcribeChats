@@ -28,11 +28,37 @@ export type CrmEventPayload = {
   sourceId: string;
 };
 
+export type CrmDirectoryClient = {
+  id: string;
+  name: string;
+  company?: string;
+  email?: string;
+  phone?: string;
+};
+
+export type CrmDirectoryProject = {
+  id: string;
+  name: string;
+  clientIds: string[];
+};
+
+export type CrmDirectory = {
+  clients: CrmDirectoryClient[];
+  projects: CrmDirectoryProject[];
+};
+
+export type CrmDestination = {
+  contactId?: string;
+  projectId?: string;
+  newContact?: CrmContactPayload;
+};
+
 export type CrmTransferResult = {
   accepted: boolean;
   tasksCreated?: number;
   eventsCreated?: number;
   contactId?: string | null;
+  projectId?: string | null;
   contactCreated?: boolean;
   duplicate?: boolean;
 };
@@ -103,7 +129,7 @@ function workspaceNote(transcription: Transcription, items: ExtractedItem[], not
   if (transcription.summary?.trim()) parts.push(`Summary\n${transcription.summary.trim()}`);
   if (extractedNotes.length) {
     const unique = [...new Set(extractedNotes.map((item) => (item.body || item.title).trim()).filter(Boolean))];
-    parts.push(`Notes\n${unique.map((value) => `- ${value}`).join('\n')}`);
+    parts.push(`Notes and takeaways\n${unique.map((value) => `- ${value}`).join('\n')}`);
   }
   if (notes.length) parts.push(`Personal notes\n${notes.map((note) => `- ${note.body.trim()}`).filter((value) => value !== '-').join('\n')}`);
   if (timeline.length) {
@@ -124,6 +150,14 @@ function validateSettings(settings: AppSettings): { webhookUrl: string; authoriz
   try { parsed = new URL(webhookUrl); } catch { throw new Error('The CRM webhook endpoint is not a valid URL.'); }
   if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('The CRM webhook must use HTTP or HTTPS.');
   return { webhookUrl, authorization: token.toLowerCase().startsWith('bearer ') ? token : `Bearer ${token}` };
+}
+
+export async function fetchCrmDirectory(settings: AppSettings): Promise<CrmDirectory> {
+  const { webhookUrl, authorization } = validateSettings(settings);
+  const response = await fetch(webhookUrl, { method: 'GET', headers: { Authorization: authorization } });
+  const result = await response.json().catch(() => ({})) as { accepted?: boolean; clients?: CrmDirectoryClient[]; projects?: CrmDirectoryProject[]; error?: string };
+  if (!response.ok || !result.accepted) throw new Error(result.error || `CRM returned HTTP ${response.status}.`);
+  return { clients: result.clients || [], projects: result.projects || [] };
 }
 
 async function postToCrm(webhookUrl: string, authorization: string, payload: Record<string, unknown>): Promise<CrmTransferResult> {
@@ -152,11 +186,10 @@ async function sendLegacyTasks(tasks: CrmTaskPayload[], settings: AppSettings, w
 }
 
 /**
- * Sends an entire transcription workspace in one request.
- * This is the primary "Send all to CRM" flow from the transcription detail page.
- * It works even when the transcript has no tasks.
+ * Sends an entire transcription workspace in one request to a chosen CRM client/project.
+ * Summary, notes, takeaways and timeline are stored on the client card.
  */
-export async function sendTranscriptionToCrm(transcriptionId: string, settings: AppSettings): Promise<CrmTransferResult> {
+export async function sendTranscriptionToCrm(transcriptionId: string, settings: AppSettings, destination: CrmDestination = {}): Promise<CrmTransferResult> {
   const { webhookUrl, authorization } = validateSettings(settings);
   const transcription = await db.transcriptions.get(transcriptionId);
   if (!transcription) throw new Error('The transcription could not be found.');
@@ -171,15 +204,21 @@ export async function sendTranscriptionToCrm(transcriptionId: string, settings: 
     .filter((item) => item.kind === 'event')
     .map(toCrmEvent)
     .filter((event): event is CrmEventPayload => Boolean(event));
+  const destinationKey = destination.contactId
+    ? `client:${destination.contactId}:project:${destination.projectId || 'none'}`
+    : destination.newContact
+      ? `new:${destination.newContact.email || destination.newContact.phone || destination.newContact.name}:project:${destination.projectId || 'none'}`
+      : 'auto';
 
   return postToCrm(webhookUrl, authorization, {
     schemaVersion: 3,
     provider: settings.crmProvider,
     eventType: 'transcribeChats.client-workspace.imported',
     occurredAt: new Date().toISOString(),
-    externalReference: `transcribeChats:${transcriptionId}:workspace`,
+    externalReference: `transcribeChats:${transcriptionId}:workspace:${destinationKey}`,
     channel: 'transcribeChats',
-    contact: inferContact(transcription),
+    destination,
+    contact: destination.newContact || inferContact(transcription),
     summary: workspaceNote(transcription, workspaceItems, personalNotes),
     transcription: {
       id: transcription.id,
