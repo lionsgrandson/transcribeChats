@@ -19,6 +19,12 @@ export type CrmContactPayload = {
   phone?: string;
 };
 
+export type CrmProjectPayload = {
+  name: string;
+  deadline?: string;
+  notes?: string;
+};
+
 export type CrmEventPayload = {
   title: string;
   type: 'Meeting' | 'Other';
@@ -51,6 +57,7 @@ export type CrmDestination = {
   contactId?: string;
   projectId?: string;
   newContact?: CrmContactPayload;
+  newProject?: CrmProjectPayload;
 };
 
 export type CrmTransferResult = {
@@ -60,6 +67,7 @@ export type CrmTransferResult = {
   contactId?: string | null;
   projectId?: string | null;
   contactCreated?: boolean;
+  projectCreated?: boolean;
   duplicate?: boolean;
 };
 
@@ -204,11 +212,12 @@ export async function sendTranscriptionToCrm(transcriptionId: string, settings: 
     .filter((item) => item.kind === 'event')
     .map(toCrmEvent)
     .filter((event): event is CrmEventPayload => Boolean(event));
+  const projectKey = destination.projectId || (destination.newProject ? `new:${destination.newProject.name}` : 'none');
   const destinationKey = destination.contactId
-    ? `client:${destination.contactId}:project:${destination.projectId || 'none'}`
+    ? `client:${destination.contactId}:project:${projectKey}`
     : destination.newContact
-      ? `new:${destination.newContact.email || destination.newContact.phone || destination.newContact.name}:project:${destination.projectId || 'none'}`
-      : 'auto';
+      ? `new:${destination.newContact.email || destination.newContact.phone || destination.newContact.name}:project:${projectKey}`
+      : `auto:project:${projectKey}`;
 
   return postToCrm(webhookUrl, authorization, {
     schemaVersion: 3,
