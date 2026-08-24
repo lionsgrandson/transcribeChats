@@ -8,7 +8,7 @@ import type { AnalysisResult, ExtractedItem, Transcription, TranscriptSegment } 
 import { useTranslation } from '../i18n/useTranslation';
 import { formatDate, formatDuration, formatTimestamp, inferDirection } from '../lib/format';
 import { exportCsv, exportText, printPdf } from '../services/exports';
-import { sendTasksToCrm, toCrmTask } from '../services/crmTransfer';
+import { sendTasksToCrm, sendTranscriptionToCrm, toCrmTask } from '../services/crmTransfer';
 import { useAppStore } from '../state/AppStore';
 
 function EditableSegment({ segment, onSave, onPlay, highlighted }: { segment: TranscriptSegment; onSave: (text: string, speaker: string) => Promise<void>; onPlay: () => void; highlighted: boolean }) {
@@ -108,6 +108,7 @@ export function TranscriptionDetailPage() {
   const [ollamaBusy, setOllamaBusy] = useState(false);
   const [ollamaError, setOllamaError] = useState('');
   const [ollamaResult, setOllamaResult] = useState<AnalysisResult>();
+  const [crmWorkspaceState, setCrmWorkspaceState] = useState<CrmTransferState>('idle');
   const playerRef = useRef<HTMLAudioElement>(null);
   const tab = params.get('tab') || 'transcript';
   const sourceSegmentId = params.get('segment') || '';
@@ -161,6 +162,19 @@ export function TranscriptionDetailPage() {
     }
     finally { setOllamaBusy(false); }
   };
+  const sendAllToCrm = async () => {
+    setCrmWorkspaceState('loading');
+    try {
+      const result = await sendTranscriptionToCrm(id, store.settings);
+      setCrmWorkspaceState('success');
+      if (result.duplicate) store.showToast('This transcription workspace was already sent to the CRM.');
+      else store.showToast(`Sent everything to CRM · ${result.tasksCreated ?? 0} tasks · ${result.eventsCreated ?? 0} events.`);
+      window.setTimeout(() => setCrmWorkspaceState('idle'), 4000);
+    } catch (reason) {
+      setCrmWorkspaceState('failure');
+      store.showToast(reason instanceof Error ? reason.message : 'Could not send the transcription to the CRM.');
+    }
+  };
   const deleteRecord = async () => { if (confirm(t('deleteConfirm'))) { await store.deleteTranscription(id); navigate('/history'); } };
   const exportPdf = () => {
     try {
@@ -176,7 +190,7 @@ export function TranscriptionDetailPage() {
     <Link className="back-link" to="/history"><ArrowLeft size={16} />{t('back')} {t('history').toLowerCase()}</Link>
     <header className="detail-header">
       <div><div className="title-line"><h1 dir="auto">{transcription.title}</h1><StatusBadge status={transcription.status} /></div><div className="detail-meta"><span>{formatDate(transcription.recordedAt, 'MMM d, yyyy · HH:mm')}</span><span>{formatDuration(transcription.durationMs)}</span><span>{transcription.detectedLanguages.join(' + ') || transcription.languageMode}</span><span>{transcription.synced ? t('synced') : t('savedLocally')}</span></div></div>
-      <div className="header-actions"><Button variant="secondary" onClick={() => setChatOpen(true)}><Sparkles size={17} />{t('openInChatGPT')}</Button><Button variant="secondary" busy={ollamaBusy} disabled={!segments.length} onClick={() => void analyzeWithOllama()}><Bot size={17} />{ollamaBusy ? 'Analyzing with Ollama…' : 'Analyze with Ollama'}</Button><div className="menu-wrap"><Button variant="secondary" onClick={() => setExportOpen((value) => !value)}><Download size={17} />{t('export')}</Button>{exportOpen && <div className="action-menu"><button onClick={() => { exportText(transcription, segments, items); setExportOpen(false); }}>{t('exportText')}</button><button onClick={() => { exportCsv(transcription, items); setExportOpen(false); }}>{t('exportCsv')}</button><button onClick={() => { exportPdf(); setExportOpen(false); }}>{t('exportPdf')}</button></div>}</div><button className="icon-button" title={t('delete')} onClick={() => void deleteRecord()}><Trash2 /></button></div>
+      <div className="header-actions"><Button busy={crmWorkspaceState === 'loading'} disabled={transcription.status !== 'ready'} onClick={() => void sendAllToCrm()}><ExternalLink size={17} />{crmWorkspaceState === 'success' ? 'Sent to CRM' : crmWorkspaceState === 'failure' ? 'Retry all to CRM' : 'Send all to CRM'}</Button><Button variant="secondary" onClick={() => setChatOpen(true)}><Sparkles size={17} />{t('openInChatGPT')}</Button><Button variant="secondary" busy={ollamaBusy} disabled={!segments.length} onClick={() => void analyzeWithOllama()}><Bot size={17} />{ollamaBusy ? 'Analyzing with Ollama…' : 'Analyze with Ollama'}</Button><div className="menu-wrap"><Button variant="secondary" onClick={() => setExportOpen((value) => !value)}><Download size={17} />{t('export')}</Button>{exportOpen && <div className="action-menu"><button onClick={() => { exportText(transcription, segments, items); setExportOpen(false); }}>{t('exportText')}</button><button onClick={() => { exportCsv(transcription, items); setExportOpen(false); }}>{t('exportCsv')}</button><button onClick={() => { exportPdf(); setExportOpen(false); }}>{t('exportPdf')}</button></div>}</div><button className="icon-button" title={t('delete')} onClick={() => void deleteRecord()}><Trash2 /></button></div>
     </header>
 
     {ollamaBusy && <div className="banner banner-neutral ollama-banner" role="status"><LoaderCircle className="spin" /><div><strong>Ollama is analyzing the full transcript</strong><span>Creating the summary, explicit tasks, meeting events, important notes, and dated timeline. Large transcripts can take a few minutes.</span></div></div>}
