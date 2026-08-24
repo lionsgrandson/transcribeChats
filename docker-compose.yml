@@ -8,16 +8,20 @@ services:
       - "8787:8787"
     gpus: all
     environment:
-      ASR_MODEL: ${ASR_MODEL:-small}
+      ASR_MODEL: ${ASR_MODEL:-large-v3}
       ASR_DEVICE: ${ASR_DEVICE:-cuda}
       ASR_COMPUTE_TYPE: ${ASR_COMPUTE_TYPE:-float16}
+      ASR_BEAM_SIZE: ${ASR_BEAM_SIZE:-8}
+      ASR_PATIENCE: ${ASR_PATIENCE:-1.2}
+      ASR_VAD_MIN_SILENCE_MS: ${ASR_VAD_MIN_SILENCE_MS:-500}
+      ASR_SPEECH_PAD_MS: ${ASR_SPEECH_PAD_MS:-250}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-2147483648}
       ENABLE_DIARIZATION: ${ENABLE_DIARIZATION:-false}
       PYANNOTE_TOKEN: ${PYANNOTE_TOKEN:-}
       PYANNOTE_MODEL: ${PYANNOTE_MODEL:-pyannote/speaker-diarization-community-1}
       PYANNOTE_METRICS_ENABLED: ${PYANNOTE_METRICS_ENABLED:-false}
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:9b}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:30b}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:4173,http://127.0.0.1:4173}
     volumes:
       - transcription-models:/models

@@ -1,9 +1,11 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { totalmem } from 'node:os';
 import { join } from 'node:path';
 
 const isWindows = process.platform === 'win32';
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const gib = (bytes) => bytes / 1024 / 1024 / 1024;
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { stdio: 'inherit', shell: false, ...options });
@@ -38,6 +40,17 @@ function findOllama() {
   return candidates.find(existsSync);
 }
 
+function strongestLocalModel() {
+  const memoryGb = gib(totalmem());
+  // Model sizes are deliberately kept below total system memory so Windows,
+  // Docker and the transcription worker still have room to operate.
+  if (memoryGb >= 170) return 'qwen3:235b';
+  if (memoryGb >= 80) return 'gpt-oss:120b';
+  if (memoryGb >= 28) return 'qwen3:30b';
+  if (memoryGb >= 16) return 'qwen3:14b';
+  return 'qwen3:8b';
+}
+
 async function ensureDocker() {
   if (commandWorks('docker', ['info'])) return;
   if (!isWindows) throw new Error('Docker is not running. Start the Docker service and run npm start again.');
@@ -60,11 +73,12 @@ async function ensureOllama() {
   }
   const response = await fetch('http://127.0.0.1:11434/api/tags');
   const installed = (await response.json()).models || [];
-  const requested = process.env.OLLAMA_MODEL || installed[0]?.name || 'qwen3.5:9b';
+  const requested = process.env.OLLAMA_MODEL?.trim() || strongestLocalModel();
   if (!installed.some((model) => model.name === requested || model.model === requested)) {
     console.log(`Pulling Ollama model ${requested}…`);
     run(executable, ['pull', requested]);
   }
+  console.log(`Ollama model selected: ${requested} (${gib(totalmem()).toFixed(0)} GB system memory detected).`);
   return requested;
 }
 
@@ -72,13 +86,14 @@ await ensureDocker();
 const ollamaModel = await ensureOllama();
 const serviceEnvironment = {
   ...process.env,
+  ASR_MODEL: process.env.ASR_MODEL || 'large-v3',
   ASR_DEVICE: process.env.ASR_DEVICE || 'cuda',
   ASR_COMPUTE_TYPE: process.env.ASR_COMPUTE_TYPE || 'float16',
   OLLAMA_URL: process.env.OLLAMA_URL || 'http://host.docker.internal:11434',
   OLLAMA_MODEL: ollamaModel
 };
 
-console.log(`Starting GPU transcription worker and Ollama model ${ollamaModel}…`);
+console.log(`Starting high-accuracy GPU transcription worker and Ollama model ${ollamaModel}…`);
 run('docker', ['compose', 'up', '--build', '-d'], { env: serviceEnvironment });
 await waitFor(() => urlReady('http://127.0.0.1:8787/health/ready'), 'Transcription worker', 120_000);
 

@@ -45,7 +45,12 @@ def _get_model():
         with _model_lock:
             if _model is None:
                 from faster_whisper import WhisperModel
-                _model = WhisperModel(settings.asr_model, device=settings.asr_device, compute_type=settings.asr_compute_type, download_root=str(settings.model_cache_dir))
+                _model = WhisperModel(
+                    settings.asr_model,
+                    device=settings.asr_device,
+                    compute_type=settings.asr_compute_type,
+                    download_root=str(settings.model_cache_dir),
+                )
     return _model
 
 
@@ -70,21 +75,52 @@ def _transcribe_sync(path: Path, language_mode: str, context: str) -> tuple[list
     prompt_parts = ["עברית English. Speakers may switch naturally between Hebrew and English."] if mixed else []
     clean_context = " ".join(context.split())[:1500]
     if clean_context:
-        prompt_parts.append(f"Known names, spellings, terminology, and conversation context: {clean_context}. Use these spellings only when they match the audio.")
+        prompt_parts.append(
+            f"Known names, spellings, terminology, and conversation context: {clean_context}. "
+            "Use these spellings only when they match the audio."
+        )
+
     raw_segments, info = model.transcribe(
-        str(path), language=language, task="transcribe", beam_size=5, vad_filter=True,
-        word_timestamps=True, multilingual=mixed, language_detection_segments=3,
-        condition_on_previous_text=not mixed,
+        str(path),
+        language=language,
+        task="transcribe",
+        beam_size=settings.asr_beam_size,
+        patience=settings.asr_patience,
+        temperature=0.0,
+        vad_filter=True,
+        vad_parameters={
+            "min_silence_duration_ms": settings.asr_vad_min_silence_ms,
+            "speech_pad_ms": settings.asr_speech_pad_ms,
+        },
+        word_timestamps=True,
+        multilingual=mixed,
+        language_detection_segments=5 if mixed else 3,
+        language_detection_threshold=0.4 if mixed else 0.5,
+        condition_on_previous_text=True,
         initial_prompt=" ".join(prompt_parts) or None,
+        hotwords=clean_context[:1000] or None,
+        hallucination_silence_threshold=1.5,
     )
     segments: list[Segment] = []
-    for index, value in enumerate(raw_segments):
+    for value in raw_segments:
+        text = value.text.strip()
+        if not text:
+            continue
         confidence = None
         if value.avg_logprob is not None:
             confidence = max(0.0, min(1.0, 1.0 + float(value.avg_logprob)))
-        text = value.text.strip()
         segment_language = detect_text_language(text, info.language or language or "auto")
-        segments.append(Segment(id=str(uuid.uuid4()), sequence_no=index, start_ms=round(value.start * 1000), end_ms=round(value.end * 1000), text=text, language=segment_language, confidence=confidence))
+        segments.append(
+            Segment(
+                id=str(uuid.uuid4()),
+                sequence_no=len(segments),
+                start_ms=round(value.start * 1000),
+                end_ms=round(value.end * 1000),
+                text=text,
+                language=segment_language,
+                confidence=confidence,
+            )
+        )
     duration = round(info.duration * 1000) if getattr(info, "duration", None) else (segments[-1].end_ms if segments else None)
     detected = []
     for segment in segments:

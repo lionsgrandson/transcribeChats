@@ -47,7 +47,9 @@ export async function transcribeWithWorker(
     form.append('language_mode', languageMode);
     form.append('context', context);
     form.append('recorded_at', recordedAt);
-    form.append('analyze', 'false');
+    // The worker now performs the full local Ollama pass immediately after
+    // transcription, so tasks, events, summary and notes are ready together.
+    form.append('analyze', 'true');
     await onProgress(12, 'Uploading to transcription engine');
     const response = await fetch(`${baseUrl}/v1/jobs`, { method: 'POST', body: form });
     if (!response.ok) {

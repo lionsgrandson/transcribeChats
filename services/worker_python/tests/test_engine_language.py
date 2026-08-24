@@ -7,6 +7,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.engine import _transcribe_sync, detect_text_language  # noqa: E402
+from app.settings import settings  # noqa: E402
 
 
 class FakeWhisperModel:
@@ -33,6 +34,15 @@ class EngineLanguageTests(unittest.TestCase):
         prompt = FakeWhisperModel.options["initial_prompt"]
         self.assertIn("Dana and Noam", prompt)
         self.assertIn("Acme", prompt)
+        self.assertIn("Acme", FakeWhisperModel.options["hotwords"])
+
+    def test_high_accuracy_decoding_is_used(self):
+        with patch("app.engine._get_model", return_value=FakeWhisperModel()):
+            _transcribe_sync(Path("meeting.m4a"), "auto", "")
+        self.assertEqual(FakeWhisperModel.options["beam_size"], settings.asr_beam_size)
+        self.assertEqual(FakeWhisperModel.options["temperature"], 0.0)
+        self.assertTrue(FakeWhisperModel.options["condition_on_previous_text"])
+        self.assertEqual(FakeWhisperModel.options["vad_parameters"]["min_silence_duration_ms"], settings.asr_vad_min_silence_ms)
 
 
 if __name__ == "__main__":
