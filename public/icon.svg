@@ -1,5 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#4f46e5"/>
-  <path d="M112 180c0-24 20-44 44-44h200c24 0 44 20 44 44v108c0 24-20 44-44 44H244l-76 58v-58h-12c-24 0-44-20-44-44V180Z" fill="#fff"/>
-  <path d="M175 236h24m30-48v96m56-70v44m56-58v72" stroke="#4f46e5" stroke-width="24" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Transcribe favicon">
+  <defs>
+    <linearGradient id="brand" x1="80" y1="80" x2="430" y2="430" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0797ff"/>
+      <stop offset="0.42" stop-color="#165dff"/>
+      <stop offset="0.7" stop-color="#6d28ff"/>
+      <stop offset="1" stop-color="#c000f5"/>
+    </linearGradient>
+  </defs>
+  <path d="M132 88h248c36 0 64 28 64 64v164c0 36-28 64-64 64H244L122 452l24-72h-14c-36 0-64-28-64-64V152c0-36 28-64 64-64Z" fill="none" stroke="url(#brand)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="url(#brand)">
+    <rect x="126" y="223" width="42" height="78" rx="21"/>
+    <rect x="190" y="187" width="46" height="150" rx="23"/>
+    <rect x="260" y="145" width="50" height="234" rx="25"/>
+    <rect x="334" y="188" width="46" height="148" rx="23"/>
+    <rect x="402" y="223" width="42" height="78" rx="21"/>
+  </g>
 </svg>
