@@ -1,4 +1,4 @@
-import { CalendarDays, CheckSquare2, CirclePlus, Clock3, Home, Languages, Menu, Search, Settings, Wifi, WifiOff, X } from 'lucide-react';
+import { BrainCircuit, CalendarDays, CheckSquare2, CirclePlus, Clock3, Home, Languages, Menu, MessageCircleMore, Search, Settings, Wifi, WifiOff, X } from 'lucide-react';
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useTranslation } from '../i18n/useTranslation';
@@ -15,6 +15,8 @@ export function AppShell() {
   const nav = [
     { to: '/', label: t('home'), icon: Home },
     { to: '/new', label: t('newTranscript'), icon: CirclePlus },
+    { to: '/study', label: 'Study Library', icon: BrainCircuit },
+    { to: '/social-audit', label: 'Conversation Audit', icon: MessageCircleMore },
     { to: '/tasks', label: t('tasks'), icon: CheckSquare2 },
     { to: '/calendar', label: t('calendar'), icon: CalendarDays },
     { to: '/history', label: t('history'), icon: Clock3 },
