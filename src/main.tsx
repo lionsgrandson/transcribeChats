@@ -6,6 +6,8 @@ import App from './App';
 import { AppErrorBoundary } from './components/AppErrorBoundary';
 import { AppStoreProvider } from './state/AppStore';
 import './styles.css';
+import './learning.css';
+import './study-progress.css';
 
 if (import.meta.env.DEV) {
   if ('serviceWorker' in navigator) {

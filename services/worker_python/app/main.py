@@ -9,7 +9,17 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .analysis import analyze as analyze_segments
 from .engine import diarization_available, model_loaded, release_model, transcribe
-from .schemas import Analysis, AnalysisRequest, HealthResponse, TranscriptionJobStatus, TranscriptionResponse
+from .learning import create_social_audit, create_study_pack
+from .schemas import (
+    Analysis,
+    AnalysisRequest,
+    HealthResponse,
+    LearningRequest,
+    SocialAuditAnalysis,
+    StudyAnalysis,
+    TranscriptionJobStatus,
+    TranscriptionResponse,
+)
 from .settings import settings
 
 SUPPORTED_EXTENSIONS = {".mp3", ".m4a", ".mp4", ".mov", ".wav", ".webm", ".mpeg", ".mpga", ".ogg", ".flac"}
@@ -17,7 +27,7 @@ logger = logging.getLogger("transcribe-chats.worker")
 jobs: dict[str, TranscriptionJobStatus] = {}
 job_semaphore = asyncio.Semaphore(1)
 
-app = FastAPI(title="TranscribeChats Worker", version="0.6.0", docs_url="/docs")
+app = FastAPI(title="TranscribeChats Worker", version="0.7.0", docs_url="/docs")
 app.add_middleware(CORSMiddleware, allow_origins=settings.origins, allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["*"])
 
 
@@ -135,6 +145,30 @@ async def analyze_transcript(request: AnalysisRequest) -> Analysis:
     except Exception as error:
         logger.exception("Ollama analysis failed")
         raise HTTPException(status_code=502, detail=f"Ollama analysis failed: {error}") from error
+
+
+@app.post("/v1/study", response_model=StudyAnalysis)
+async def build_study_pack(request: LearningRequest) -> StudyAnalysis:
+    if not request.transcript.strip():
+        raise HTTPException(status_code=400, detail="A transcript is required before study generation.")
+    release_model()
+    try:
+        return await create_study_pack(request)
+    except Exception as error:
+        logger.exception("Study generation failed")
+        raise HTTPException(status_code=502, detail=f"Study generation failed: {error}") from error
+
+
+@app.post("/v1/social-audit", response_model=SocialAuditAnalysis)
+async def build_social_audit(request: LearningRequest) -> SocialAuditAnalysis:
+    if not request.transcript.strip():
+        raise HTTPException(status_code=400, detail="A transcript is required before conversation audit.")
+    release_model()
+    try:
+        return await create_social_audit(request)
+    except Exception as error:
+        logger.exception("Conversation audit failed")
+        raise HTTPException(status_code=502, detail=f"Conversation audit failed: {error}") from error
 
 
 @app.post("/v1/transcribe", response_model=TranscriptionResponse)

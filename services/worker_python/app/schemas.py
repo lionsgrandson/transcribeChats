@@ -60,6 +60,100 @@ class AnalysisRequest(BaseModel):
     context: str = ""
 
 
+class LearningRequest(BaseModel):
+    title: str = ""
+    transcript: str
+    context: str = ""
+
+
+class StudyTopic(BaseModel):
+    id: str
+    title: str
+    parentId: str | None = None
+    summary: str
+    keyPoints: list[str] = Field(default_factory=list)
+    examples: list[str] = Field(default_factory=list)
+    commonMistakes: list[str] = Field(default_factory=list)
+    prerequisites: list[str] = Field(default_factory=list)
+
+
+class StudyFlashcard(BaseModel):
+    id: str
+    topicId: str
+    front: str
+    back: str
+    difficulty: Literal["easy", "medium", "hard"] = "medium"
+
+
+class StudyQuestion(BaseModel):
+    id: str
+    topicId: str
+    type: Literal["multiple_choice", "short_answer", "explain", "code"]
+    prompt: str
+    choices: list[str] = Field(default_factory=list)
+    answer: str
+    explanation: str
+    difficulty: Literal["easy", "medium", "hard"] = "medium"
+
+
+class StudyTask(BaseModel):
+    id: str
+    topicId: str
+    title: str
+    instruction: str
+    successCriteria: str
+    difficulty: Literal["easy", "medium", "hard"] = "medium"
+
+
+class StudyAnalysis(BaseModel):
+    title: str
+    suggestedPath: list[str] = Field(default_factory=list)
+    overview: str
+    learningObjectives: list[str] = Field(default_factory=list)
+    topics: list[StudyTopic] = Field(default_factory=list)
+    flashcards: list[StudyFlashcard] = Field(default_factory=list)
+    quiz: list[StudyQuestion] = Field(default_factory=list)
+    test: list[StudyQuestion] = Field(default_factory=list)
+    tasks: list[StudyTask] = Field(default_factory=list)
+    reviewScheduleDays: list[int] = Field(default_factory=lambda: [1, 3, 7, 14, 30])
+
+
+class SocialAuditObservation(BaseModel):
+    title: str
+    evidence: list[str] = Field(default_factory=list)
+    interpretation: str
+    alternatives: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.5, ge=0, le=1)
+
+
+class SocialNorm(BaseModel):
+    norm: str
+    whyItMatters: str
+    example: str
+
+
+class SocialExperiment(BaseModel):
+    title: str
+    action: str
+    whatToNotice: str
+
+
+class SocialAuditAnalysis(BaseModel):
+    title: str
+    summary: str
+    emotional: list[SocialAuditObservation] = Field(default_factory=list)
+    logical: list[SocialAuditObservation] = Field(default_factory=list)
+    social: list[SocialAuditObservation] = Field(default_factory=list)
+    habitsAndPatterns: list[SocialAuditObservation] = Field(default_factory=list)
+    possibleBlindSpots: list[SocialAuditObservation] = Field(default_factory=list)
+    strengths: list[str] = Field(default_factory=list)
+    socialNormsWorthLearning: list[SocialNorm] = Field(default_factory=list)
+    lessons: list[str] = Field(default_factory=list)
+    reflectionQuestions: list[str] = Field(default_factory=list)
+    experiments: list[SocialExperiment] = Field(default_factory=list)
+    uncertaintyNotes: list[str] = Field(default_factory=list)
+
+
 class TranscriptionResponse(BaseModel):
     duration_ms: int | None = None
     detected_languages: list[str]
