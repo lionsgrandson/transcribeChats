@@ -59,6 +59,9 @@ export interface StudyEntry {
   sourceName: string;
   transcript: string;
   analysis: StudyAnalysis;
+  masteredTopicIds: string[];
+  completedTaskIds: string[];
+  questionResults: Record<string, 'correct' | 'incorrect'>;
   createdAt: string;
   updatedAt: string;
   lastReviewedAt?: string;
