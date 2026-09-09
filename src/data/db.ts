@@ -7,6 +7,7 @@ import type {
   TranscriptionNote,
   TranscriptSegment
 } from '../domain/types';
+import type { SocialAuditEntry, StudyEntry } from '../domain/learning';
 
 export class TranscribeChatsDatabase extends Dexie {
   transcriptions!: EntityTable<Transcription, 'id'>;
@@ -15,6 +16,8 @@ export class TranscribeChatsDatabase extends Dexie {
   notes!: EntityTable<TranscriptionNote, 'id'>;
   media!: EntityTable<LocalMediaAsset, 'id'>;
   settings!: EntityTable<AppSettings, 'id'>;
+  studyEntries!: EntityTable<StudyEntry, 'id'>;
+  socialAudits!: EntityTable<SocialAuditEntry, 'id'>;
 
   constructor() {
     super('transcribeChats');
@@ -25,6 +28,16 @@ export class TranscribeChatsDatabase extends Dexie {
       notes: 'id, transcriptionId, updatedAt',
       media: 'id, transcriptionId, createdAt',
       settings: 'id'
+    });
+    this.version(2).stores({
+      transcriptions: 'id, status, sourceType, recordedAt, updatedAt',
+      segments: 'id, transcriptionId, [transcriptionId+sequenceNo]',
+      items: 'id, transcriptionId, kind, status, dueAt, updatedAt, *tags',
+      notes: 'id, transcriptionId, updatedAt',
+      media: 'id, transcriptionId, createdAt',
+      settings: 'id',
+      studyEntries: 'id, title, updatedAt, *path',
+      socialAudits: 'id, title, updatedAt'
     });
   }
 }
