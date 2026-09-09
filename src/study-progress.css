@@ -1,0 +1,15 @@
+.mastery-summary { display: grid; gap: 6px; width: min(360px, 100%); margin-top: 12px; }
+.mastery-summary span { color: var(--muted); font-size: 12px; }
+.mastery-summary span strong { color: var(--ink); font-size: 15px; }
+.mastery-summary progress { width: 100%; height: 8px; accent-color: var(--success); }
+.study-card-status { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.study-card-status button { border: 1px solid var(--line); background: var(--surface-alt); color: var(--muted); border-radius: 999px; padding: 5px 9px; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; }
+.study-card-status button:hover { border-color: #c9c6dd; color: var(--ink); }
+.is-mastered { border-color: #cbe8d9 !important; background: #fbfffd !important; }
+.is-mastered .study-card-status button { color: var(--success); background: #e8f7ef; border-color: #cbe8d9; }
+.question-card.result-correct { border-color: #cbe8d9; }
+.question-card.result-incorrect { border-color: #efc8cc; }
+.self-grade { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.self-grade button { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 7px 10px; font-weight: 600; }
+.self-grade button:first-child { color: var(--success); }
+.self-grade button:last-child { color: var(--danger); }
