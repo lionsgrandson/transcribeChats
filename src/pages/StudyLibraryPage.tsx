@@ -13,7 +13,7 @@ type SourceMode = 'existing' | 'upload' | 'text';
 type StudyTab = 'notes' | 'tasks' | 'flashcards' | 'quiz' | 'test';
 
 function parsePath(value: string): string[] {
-  return value.split(/[>\/\\]+/).map((part) => part.trim()).filter(Boolean);
+  return value.split(/[>/\\]+/).map((part) => part.trim()).filter(Boolean);
 }
 
 function normalizeEntry(entry: StudyEntry): StudyEntry {
