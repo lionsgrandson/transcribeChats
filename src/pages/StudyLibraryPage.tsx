@@ -1,15 +1,15 @@
-import { BookOpen, BrainCircuit, CheckCircle2, ExternalLink, FileText, FolderTree, Search, Sparkles, UploadCloud, Video } from 'lucide-react';
+import { BookOpen, BrainCircuit, CheckCircle2, ExternalLink, FileText, FolderTree, Search, Sparkles, UploadCloud, Video, Youtube } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Card, Field } from '../components/ui';
 import { db } from '../data/db';
 import type { StudyEntry } from '../domain/learning';
 import type { LanguageMode } from '../domain/types';
 import { createId } from '../lib/id';
-import { analyzeStudyWithOllama, buildStudyChatGptPrompt, copyAndOpenChatGpt, parseStudyChatGptResult } from '../services/learning';
+import { analyzeStudyWithOllama, buildStudyChatGptPrompt, copyAndOpenChatGpt, importYouTubeTranscript, parseStudyChatGptResult } from '../services/learning';
 import { transcribeWithWorker } from '../services/worker';
 import { useAppStore } from '../state/AppStore';
 
-type SourceMode = 'existing' | 'upload' | 'text';
+type SourceMode = 'existing' | 'upload' | 'youtube' | 'text';
 type StudyTab = 'notes' | 'tasks' | 'flashcards' | 'quiz' | 'test';
 
 function parsePath(value: string): string[] {
@@ -49,6 +49,7 @@ export function StudyLibraryPage() {
   const [context, setContext] = useState('');
   const [text, setText] = useState('');
   const [file, setFile] = useState<File>();
+  const [youtubeUrl, setYoutubeUrl] = useState('');
   const [languageMode, setLanguageMode] = useState<LanguageMode>(settings.languageMode);
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
@@ -110,6 +111,20 @@ export function StudyLibraryPage() {
         transcript = text.trim();
         resolvedTitle ||= 'Study notes';
         setProgress(70); setStage('Building study pack with Ollama');
+      } else if (sourceMode === 'youtube') {
+        if (!youtubeUrl.trim()) throw new Error('Paste a YouTube link first.');
+        if (workerReady === false) throw new Error('The local transcription worker is not available. Start it before importing YouTube.');
+        setProgress(15); setStage('Checking YouTube captions');
+        const result = await importYouTubeTranscript(settings.workerUrl, {
+          url: youtubeUrl.trim(),
+          languageMode,
+          context
+        });
+        transcript = result.transcript;
+        sourceName = result.sourceName;
+        resolvedTitle ||= result.title;
+        setProgress(70);
+        setStage(result.method === 'captions' ? 'YouTube captions loaded · building study pack with Ollama' : 'YouTube audio transcribed with Whisper · building study pack with Ollama');
       } else {
         if (!file) throw new Error('Choose a video or audio file first.');
         if (workerReady === false) throw new Error('The local transcription worker is not available. Start it before importing media.');
@@ -147,7 +162,7 @@ export function StudyLibraryPage() {
       setSelectedId(entry.id);
       setProgress(100); setStage('Ready');
       showToast('Study pack created and indexed locally.');
-      setFile(undefined); setText(''); setTitle(''); setPathText('');
+      setFile(undefined); setYoutubeUrl(''); setText(''); setTitle(''); setPathText('');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not create the study pack.');
     } finally {
@@ -247,7 +262,7 @@ export function StudyLibraryPage() {
 
   return <div className="page learning-page">
     <header className="page-header learning-header">
-      <div><span className="eyebrow">Learning system</span><h1>Study Library</h1><p>Turn lectures, courses, videos, transcripts and notes into a structured library you can actually learn from.</p></div>
+      <div><span className="eyebrow">Learning system</span><h1>Study Library</h1><p>Turn lectures, courses, YouTube videos, transcripts and notes into a structured library you can actually learn from.</p></div>
       <div className="learning-kpi"><BrainCircuit /><strong>{entries.length}</strong><span>study packs</span></div>
     </header>
 
@@ -264,25 +279,28 @@ export function StudyLibraryPage() {
 
       <section className="learning-main">
         <Card className="learning-create-card">
-          <div className="learning-card-title"><Sparkles /><div><strong>Create a study pack</strong><span>Ollama runs locally. Upload a lecture video or audio file, use an existing transcript, or paste notes.</span></div></div>
+          <div className="learning-card-title"><Sparkles /><div><strong>Create a study pack</strong><span>Ollama runs locally. Use an existing transcript, upload video/audio, paste a YouTube link, or paste notes.</span></div></div>
           <div className="learning-source-tabs">
             <button className={sourceMode === 'existing' ? 'active' : ''} onClick={() => setSourceMode('existing')}><BookOpen size={16} />Existing transcript</button>
             <button className={sourceMode === 'upload' ? 'active' : ''} onClick={() => setSourceMode('upload')}><Video size={16} />Video / audio</button>
+            <button className={sourceMode === 'youtube' ? 'active' : ''} onClick={() => setSourceMode('youtube')}><Youtube size={16} />YouTube link</button>
             <button className={sourceMode === 'text' ? 'active' : ''} onClick={() => setSourceMode('text')}><FileText size={16} />Paste text</button>
           </div>
           <div className="form-grid two-columns">
             {sourceMode === 'existing' && <Field label="Transcript"><select value={sourceId} onChange={(event) => { setSourceId(event.target.value); const source = readyTranscripts.find((item) => item.id === event.target.value); if (source && !title) setTitle(source.title); }}><option value="">Choose transcript…</option>{readyTranscripts.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></Field>}
             {sourceMode === 'upload' && <Field label="Video or audio file" hint="Video: MP4, MOV, WebM, MPEG · Audio: MP3, M4A, WAV, OGG, FLAC"><input type="file" accept="video/mp4,video/quicktime,video/webm,video/mpeg,audio/*,.mp4,.mov,.webm,.mpeg,.mp3,.m4a,.wav,.ogg,.flac" onChange={(event) => chooseMedia(event.target.files?.[0])} /></Field>}
-            {sourceMode === 'upload' && <Field label="Language"><select value={languageMode} onChange={(event) => setLanguageMode(event.target.value as LanguageMode)}><option value="auto">Auto</option><option value="en">English</option><option value="he">Hebrew</option><option value="mixed">Mixed Hebrew / English</option></select></Field>}
+            {sourceMode === 'youtube' && <Field label="YouTube link" hint="Single video links only. Captions are used first; Whisper is the automatic fallback."><input type="url" value={youtubeUrl} onChange={(event) => setYoutubeUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=…" /></Field>}
+            {(sourceMode === 'upload' || sourceMode === 'youtube') && <Field label="Language"><select value={languageMode} onChange={(event) => setLanguageMode(event.target.value as LanguageMode)}><option value="auto">Auto</option><option value="en">English</option><option value="he">Hebrew</option><option value="mixed">Mixed Hebrew / English</option></select></Field>}
             <Field label="Title"><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Java — Classes lesson 3" /></Field>
             <Field label="Library path" hint="Optional. Ollama can suggest it."><input value={pathText} onChange={(event) => setPathText(event.target.value)} placeholder="Java / Classes / Inheritance" /></Field>
           </div>
           {sourceMode === 'upload' && file && <div className="selected-learning-media"><Video size={20} /><div><strong>{file.name}</strong><span>{(file.size / 1024 / 1024).toFixed(1)} MB · {file.type.startsWith('video/') ? 'Video' : 'Audio'}</span></div><button type="button" onClick={() => setFile(undefined)}>Remove</button></div>}
+          {sourceMode === 'youtube' && <div className="youtube-study-note"><Youtube size={20} /><div><strong>Fast path first</strong><span>If the video has usable captions, the app imports those directly. If not, it downloads only the audio with yt-dlp and transcribes it locally with Whisper.</span></div></div>}
           {sourceMode === 'text' && <Field label="Study material"><textarea className="learning-textarea" value={text} onChange={(event) => setText(event.target.value)} placeholder="Paste lecture transcript, notes, course material…" /></Field>}
           <Field label="Context" hint="Optional: course name, lecturer terms, what you are trying to master."><input value={context} onChange={(event) => setContext(event.target.value)} placeholder="Course: Java fundamentals · Focus: OOP and exam preparation" /></Field>
           {(busy || progress > 0) && <div className="learning-progress"><div><span>{stage}</span><strong>{progress}%</strong></div><progress max="100" value={progress} /></div>}
           {error && <div className="banner banner-error">{error}</div>}
-          <div className="form-actions"><Button busy={busy} onClick={() => void createStudyPack()}><UploadCloud size={17} />{sourceMode === 'upload' ? 'Transcribe video/audio + build study pack' : 'Build learning pack'}</Button></div>
+          <div className="form-actions"><Button busy={busy} onClick={() => void createStudyPack()}><UploadCloud size={17} />{sourceMode === 'upload' ? 'Transcribe video/audio + build study pack' : sourceMode === 'youtube' ? 'Import YouTube + build study pack' : 'Build learning pack'}</Button></div>
         </Card>
 
         {selected ? <div className="learning-result">

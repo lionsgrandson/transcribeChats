@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { SocialAuditAnalysis, StudyAnalysis } from '../domain/learning';
+import type { LanguageMode } from '../domain/types';
 
 const difficulty = z.enum(['easy', 'medium', 'hard']);
 const topicSchema = z.object({
@@ -63,6 +64,16 @@ const socialAuditSchema = z.object({
   uncertaintyNotes: z.array(z.string()).default([])
 });
 
+const youtubeImportSchema = z.object({
+  title: z.string(),
+  sourceName: z.string(),
+  transcript: z.string().min(1),
+  method: z.enum(['captions', 'whisper']),
+  videoId: z.string(),
+  webpageUrl: z.string(),
+  durationSeconds: z.number().int().nonnegative().nullable().optional()
+});
+
 async function postJson<T>(workerUrl: string, path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
   const response = await fetch(`${workerUrl.replace(/\/$/, '')}${path}`, {
     method: 'POST',
@@ -70,7 +81,14 @@ async function postJson<T>(workerUrl: string, path: string, body: unknown, schem
     body: JSON.stringify(body)
   });
   if (!response.ok) {
-    const detail = await response.text();
+    const raw = await response.text();
+    let detail = raw;
+    try {
+      const parsed = JSON.parse(raw) as { detail?: string };
+      detail = parsed.detail || raw;
+    } catch {
+      // Keep the raw response when the worker did not return JSON.
+    }
     throw new Error(detail || `Learning worker returned ${response.status}`);
   }
   return schema.parse(await response.json());
@@ -113,6 +131,14 @@ export function analyzeStudyWithOllama(workerUrl: string, input: { title: string
 
 export function analyzeSocialAuditWithOllama(workerUrl: string, input: { title: string; transcript: string; context: string }): Promise<SocialAuditAnalysis> {
   return postJson(workerUrl, '/v1/social-audit', input, socialAuditSchema);
+}
+
+export function importYouTubeTranscript(workerUrl: string, input: { url: string; languageMode: LanguageMode; context: string }) {
+  return postJson(workerUrl, '/v1/youtube/transcript', {
+    url: input.url,
+    language_mode: input.languageMode,
+    context: input.context
+  }, youtubeImportSchema);
 }
 
 export function parseStudyChatGptResult(value: string): StudyAnalysis {

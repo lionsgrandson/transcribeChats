@@ -37,6 +37,10 @@
 .selected-learning-media span { color: var(--muted); font-size: 12px; }
 .selected-learning-media button { margin-inline-start: auto; border: 0; background: transparent; color: var(--muted); padding: 7px 9px; border-radius: 8px; }
 .selected-learning-media button:hover { background: #eeeef5; color: var(--ink); }
+.youtube-study-note { display: flex; align-items: flex-start; gap: 11px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-alt); }
+.youtube-study-note > svg { color: var(--primary); flex: 0 0 auto; margin-top: 1px; }
+.youtube-study-note > div { display: grid; gap: 3px; }
+.youtube-study-note span { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .chatgpt-import-card { display: grid; gap: 14px; border-color: #d7d3ff; background: linear-gradient(180deg, #fbfaff, #fff); box-shadow: none; }
 .chatgpt-import-card .learning-textarea { min-height: 210px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
 .learning-progress { display: grid; gap: 7px; }
