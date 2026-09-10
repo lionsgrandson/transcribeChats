@@ -13,7 +13,7 @@ interface InteractiveQuestionSetProps {
 }
 
 function normalizeAnswer(value: string): string {
-  return value.trim().replace(/^([A-D]|\d+)[).:\-]\s*/i, '').replace(/\s+/g, ' ').toLocaleLowerCase();
+  return value.trim().replace(/^([A-D]|\d+)[).:-]\s*/i, '').replace(/\s+/g, ' ').toLocaleLowerCase();
 }
 
 function isCorrectChoice(question: StudyQuestion, choice: string): boolean {
@@ -21,7 +21,7 @@ function isCorrectChoice(question: StudyQuestion, choice: string): boolean {
   const candidate = normalizeAnswer(choice);
   if (candidate === answer) return true;
 
-  const letterMatch = question.answer.trim().match(/^([A-D])(?:[).:\-]|\s|$)/i);
+  const letterMatch = question.answer.trim().match(/^([A-D])(?:[).:-]|\s|$)/i);
   if (letterMatch) {
     const index = letterMatch[1].toUpperCase().charCodeAt(0) - 65;
     return question.choices[index] === choice;
