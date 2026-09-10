@@ -133,6 +133,119 @@ function shortTitle(value: string, fallback: string): string {
   return sentence.length > 80 ? `${sentence.slice(0, 77).trim()}…` : sentence;
 }
 
+function difficultyValue(value: unknown): 'easy' | 'medium' | 'hard' {
+  if (typeof value !== 'string') return 'medium';
+  const normalized = value.trim().toLowerCase();
+  if (normalized.includes('easy') || normalized.includes('beginner')) return 'easy';
+  if (normalized.includes('hard') || normalized.includes('advanced') || normalized.includes('difficult')) return 'hard';
+  return 'medium';
+}
+
+function normalizeQuestionType(value: unknown): 'multiple_choice' | 'short_answer' | 'explain' | 'code' {
+  const normalized = typeof value === 'string'
+    ? value.toLowerCase().replace(/\\/g, '').replace(/[\s-]+/g, '_')
+    : '';
+  if (normalized.includes('multiple') || normalized === 'mcq') return 'multiple_choice';
+  if (normalized.includes('code') || normalized.includes('program') || normalized.includes('implementation')) return 'code';
+  if (normalized.includes('explain') || normalized.includes('reason') || normalized.includes('scenario') || normalized.includes('review') || normalized.includes('analysis')) return 'explain';
+  return 'short_answer';
+}
+
+function normalizeStudyTopic(value: unknown, index: number): z.infer<typeof topicSchema> {
+  const record = isRecord(value) ? value : {};
+  const title = firstText(record, ['title', 'name', 'topic'], `Topic ${index + 1}`);
+  const parent = pick(record, ['parentId', 'parent', 'parent_id']);
+  return {
+    id: firstText(record, ['id', 'topicId', 'key'], `topic-${index + 1}`),
+    title,
+    parentId: typeof parent === 'string' ? parent : null,
+    summary: firstText(record, ['summary', 'overview', 'description', 'explanation'], title),
+    keyPoints: stringList(pick(record, ['keyPoints', 'key_points', 'points', 'takeaways'])),
+    examples: stringList(pick(record, ['examples', 'example'])),
+    commonMistakes: stringList(pick(record, ['commonMistakes', 'common_mistakes', 'mistakes', 'pitfalls'])),
+    prerequisites: stringList(pick(record, ['prerequisites', 'prerequisite', 'requires']))
+  };
+}
+
+function normalizeStudyQuestion(value: unknown, index: number): z.infer<typeof questionSchema> {
+  const record = isRecord(value) ? value : {};
+  const type = normalizeQuestionType(pick(record, ['type', 'questionType', 'kind']));
+  return {
+    id: firstText(record, ['id', 'questionId', 'key'], `question-${index + 1}`),
+    topicId: firstText(record, ['topicId', 'topic_id', 'topic'], 'general'),
+    type,
+    prompt: firstText(record, ['prompt', 'question', 'title', 'instruction'], `Question ${index + 1}`),
+    choices: type === 'multiple_choice' ? stringList(pick(record, ['choices', 'options', 'answers'])) : [],
+    answer: firstText(record, ['answer', 'correctAnswer', 'solution', 'expectedAnswer']),
+    explanation: firstText(record, ['explanation', 'why', 'rationale', 'teachingExplanation']),
+    difficulty: difficultyValue(pick(record, ['difficulty', 'level']))
+  };
+}
+
+function normalizeStudyFlashcard(value: unknown, index: number): z.infer<typeof studySchema>['flashcards'][number] {
+  const record = isRecord(value) ? value : {};
+  return {
+    id: firstText(record, ['id', 'cardId', 'key'], `flashcard-${index + 1}`),
+    topicId: firstText(record, ['topicId', 'topic_id', 'topic'], 'general'),
+    front: firstText(record, ['front', 'question', 'prompt', 'term'], `Flashcard ${index + 1}`),
+    back: firstText(record, ['back', 'answer', 'definition', 'explanation']),
+    difficulty: difficultyValue(pick(record, ['difficulty', 'level']))
+  };
+}
+
+function normalizeStudyTask(value: unknown, index: number): z.infer<typeof studySchema>['tasks'][number] {
+  const record = isRecord(value) ? value : {};
+  const instructionParts = stringList(pick(record, ['instruction', 'instructions', 'steps', 'action', 'whatToDo']));
+  const successParts = stringList(pick(record, ['successCriteria', 'success_criteria', 'criteria', 'doneWhen', 'completionCriteria']));
+  return {
+    id: firstText(record, ['id', 'taskId', 'key'], `task-${index + 1}`),
+    topicId: firstText(record, ['topicId', 'topic_id', 'topic'], 'general'),
+    title: firstText(record, ['title', 'name', 'task'], `Task ${index + 1}`),
+    instruction: instructionParts.join('\n'),
+    successCriteria: successParts.join('\n'),
+    difficulty: difficultyValue(pick(record, ['difficulty', 'level']))
+  };
+}
+
+function unwrapStudy(value: unknown): UnknownRecord {
+  if (!isRecord(value)) return {};
+  for (const key of ['study', 'studyPack', 'learningPack', 'result']) {
+    const nested = value[key];
+    if (isRecord(nested)) return nested;
+  }
+  if (isRecord(value.analysis) && ('topics' in value.analysis || 'flashcards' in value.analysis || 'quiz' in value.analysis)) {
+    return value.analysis;
+  }
+  return value;
+}
+
+function normalizeStudy(value: unknown): unknown {
+  const record = unwrapStudy(value);
+  const topics = pick(record, ['topics', 'sections']);
+  const flashcards = pick(record, ['flashcards', 'cards']);
+  const quiz = pick(record, ['quiz', 'quizQuestions', 'questions']);
+  const test = pick(record, ['test', 'testQuestions', 'exam']);
+  const tasks = pick(record, ['tasks', 'practiceTasks', 'exercises']);
+  const reviewDays = Array.isArray(pick(record, ['reviewScheduleDays', 'reviewDays', 'spacedRepetitionDays']))
+    ? (pick(record, ['reviewScheduleDays', 'reviewDays', 'spacedRepetitionDays']) as unknown[])
+        .map((item) => Number(item))
+        .filter((item) => Number.isInteger(item) && item > 0)
+    : [1, 3, 7, 14, 30];
+
+  return {
+    title: firstText(record, ['title', 'name'], 'Study pack'),
+    suggestedPath: stringList(pick(record, ['suggestedPath', 'path', 'libraryPath'])),
+    overview: firstText(record, ['overview', 'summary', 'description']),
+    learningObjectives: stringList(pick(record, ['learningObjectives', 'objectives', 'goals'])),
+    topics: (Array.isArray(topics) ? topics : topics === undefined || topics === null ? [] : [topics]).map(normalizeStudyTopic),
+    flashcards: (Array.isArray(flashcards) ? flashcards : flashcards === undefined || flashcards === null ? [] : [flashcards]).map(normalizeStudyFlashcard),
+    quiz: (Array.isArray(quiz) ? quiz : quiz === undefined || quiz === null ? [] : [quiz]).map(normalizeStudyQuestion),
+    test: (Array.isArray(test) ? test : test === undefined || test === null ? [] : [test]).map(normalizeStudyQuestion),
+    tasks: (Array.isArray(tasks) ? tasks : tasks === undefined || tasks === null ? [] : [tasks]).map(normalizeStudyTask),
+    reviewScheduleDays: reviewDays.length ? reviewDays : [1, 3, 7, 14, 30]
+  };
+}
+
 function confidenceValue(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return Math.max(0, Math.min(1, value > 1 ? value / 100 : value));
@@ -294,7 +407,7 @@ function parseChatGptJson(value: string): unknown {
       // Fall through to the clearer error below.
     }
   }
-  throw new Error('I could not find a valid JSON study/audit result in that ChatGPT response. Ask ChatGPT to return the complete replacement JSON object and paste it again.');
+  throw new Error('The pasted response is not directly parseable JSON.');
 }
 
 export function analyzeStudyWithOllama(workerUrl: string, input: { title: string; transcript: string; context: string }): Promise<StudyAnalysis> {
@@ -313,8 +426,16 @@ export function importYouTubeTranscript(workerUrl: string, input: { url: string;
   }, youtubeImportSchema);
 }
 
+export function repairStudyChatGptResult(workerUrl: string, input: { title: string; response: string }): Promise<StudyAnalysis> {
+  return postJson(workerUrl, '/v1/chatgpt/repair-study', input, studySchema);
+}
+
+export function repairSocialAuditChatGptResult(workerUrl: string, input: { title: string; response: string }): Promise<SocialAuditAnalysis> {
+  return postJson(workerUrl, '/v1/chatgpt/repair-audit', input, socialAuditSchema);
+}
+
 export function parseStudyChatGptResult(value: string): StudyAnalysis {
-  return studySchema.parse(parseChatGptJson(value));
+  return studySchema.parse(normalizeStudy(parseChatGptJson(value)));
 }
 
 export function parseSocialAuditChatGptResult(value: string): SocialAuditAnalysis {
@@ -325,11 +446,14 @@ export function buildStudyChatGptPrompt(title: string, transcript: string, analy
   return `You are my expert tutor and curriculum designer. Improve this locally generated study pack without deleting useful material. Correct mistakes against the transcript, improve the hierarchy, add missing active-recall questions, make the test genuinely challenging, and make the practice tasks prove mastery rather than passive reading. Keep claims grounded in the source.
 
 IMPORTANT RETURN CONTRACT:
-- Return the COMPLETE replacement study pack as one valid JSON object only.
+- Return the COMPLETE replacement study pack as one valid JSON object.
+- Put the JSON inside one fenced \`\`\`json code block so copying it preserves characters exactly.
 - Keep exactly the same top-level structure and field names as LOCAL OLLAMA STUDY PACK.
+- Question type must be exactly one of: multiple_choice, short_answer, explain, code.
+- Task fields must be `instruction` and `successCriteria`, both strings, not arrays.
 - Preserve existing ids when an item still represents the same topic/question/task/flashcard so my learning progress can be preserved.
 - New items must get short unique string ids.
-- Do not add commentary before or after the JSON.
+- Do not add commentary before or after the JSON code block.
 - Do not omit arrays just because they are empty.
 
 TITLE:
@@ -346,14 +470,15 @@ export function buildAuditChatGptPrompt(title: string, transcript: string, analy
   return `Review this conversation audit as a careful coach. Improve the emotional, logical, and social analysis while staying evidence-based. Do not diagnose anyone, do not claim hidden intent as fact, distinguish observation from interpretation, add plausible alternative explanations, and focus on habits, social norms, communication choices, and practical lessons I can test.
 
 IMPORTANT RETURN CONTRACT:
-- Return the COMPLETE replacement audit as one valid JSON object only.
+- Return the COMPLETE replacement audit as one valid JSON object.
+- Put the JSON inside one fenced \`\`\`json code block so copying it preserves characters exactly.
 - Keep exactly the same top-level structure and field names as LOCAL OLLAMA AUDIT.
 - emotional, logical, social, habitsAndPatterns, and possibleBlindSpots must contain objects with exactly: title (string), evidence (string array), interpretation (string), alternatives (string array), confidence (number from 0 to 1).
 - strengths, lessons, reflectionQuestions, and uncertaintyNotes must be arrays of STRINGS, not objects.
 - socialNormsWorthLearning items must use exactly: norm, whyItMatters, example.
 - experiments items must use exactly: title, action, whatToNotice.
 - Keep confidence values between 0 and 1.
-- Do not add commentary before or after the JSON.
+- Do not add commentary before or after the JSON code block.
 - Do not omit arrays just because they are empty.
 
 TITLE:
