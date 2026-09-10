@@ -10,7 +10,7 @@ import { transcribeWithWorker } from '../services/worker';
 import { useAppStore } from '../state/AppStore';
 
 type SourceMode = 'existing' | 'upload' | 'text';
-type AuditTab = 'overview' | 'emotional' | 'logical' | 'social' | 'patterns' | 'blindspots';
+type AuditTab = 'overview' | 'emotional' | 'logical' | 'social' | 'patterns' | 'blindspots' | 'chatgpt';
 
 function ObservationList({ values }: { values: SocialAuditObservation[] }) {
   if (!values.length) return <p className="empty-copy">No strong observations in this category.</p>;
@@ -130,7 +130,7 @@ export function SocialAuditPage() {
       setChatImportOpen(true);
       setChatImportError(undefined);
       await copyAndOpenChatGpt(buildAuditChatGptPrompt(selected.title, raw, selected.analysis));
-      showToast('Audit and source transcript copied. Paste them into ChatGPT, then paste ChatGPT’s JSON result back here.');
+      showToast('Audit and source transcript copied. Paste them into ChatGPT, then paste the full ChatGPT response back here.');
     } catch {
       setError('Could not copy the ChatGPT handoff. Your browser may have blocked clipboard access.');
     }
@@ -149,23 +149,37 @@ export function SocialAuditPage() {
 
   const applyChatGptResult = async () => {
     if (!selected) return;
+    const rawOutput = chatResult.trim();
+    if (!rawOutput) return setChatImportError('Paste the ChatGPT response first.');
+    const now = new Date().toISOString();
+    let structuredImported = false;
+
     try {
-      const analysis = parseSocialAuditChatGptResult(chatResult);
-      const now = new Date().toISOString();
+      const analysis = parseSocialAuditChatGptResult(rawOutput);
       await db.socialAudits.update(selected.id, {
         title: analysis.title || selected.title,
         analysis,
         updatedAt: now,
-        chatGptRefinedAt: now
+        chatGptRefinedAt: now,
+        chatGptOutput: rawOutput
       });
-      await reload();
-      setChatResult('');
-      setChatImportOpen(false);
-      setChatImportError(undefined);
-      showToast('ChatGPT audit imported. The refined audit is now the version shown in your library.');
-    } catch (reason) {
-      setChatImportError(reason instanceof Error ? reason.message : 'That ChatGPT result could not be imported.');
+      structuredImported = true;
+    } catch {
+      await db.socialAudits.update(selected.id, {
+        updatedAt: now,
+        chatGptRefinedAt: now,
+        chatGptOutput: rawOutput
+      });
     }
+
+    await reload();
+    setChatResult('');
+    setChatImportOpen(false);
+    setChatImportError(undefined);
+    setTab('chatgpt');
+    showToast(structuredImported
+      ? 'ChatGPT audit imported and the full response was saved.'
+      : 'ChatGPT response saved exactly as pasted. The structured Ollama audit was left unchanged.');
   };
 
   const removeSelected = async () => {
@@ -227,13 +241,13 @@ export function SocialAuditPage() {
           <div className="learning-result-head"><div><small>{selected.sourceName}{selected.chatGptRefinedAt ? ' · ChatGPT refined' : ''}</small><h2>{selected.title}</h2><p>{selected.analysis.summary}</p></div><div className="learning-result-actions"><Button variant="secondary" onClick={() => void improveWithChatGpt()}><ExternalLink size={16} />Second pass with ChatGPT</Button><Button variant="secondary" onClick={() => { setChatImportOpen(true); setChatImportError(undefined); }}>Paste ChatGPT result</Button><Button variant="ghost" onClick={() => void removeSelected()}>Delete</Button></div></div>
 
           {chatImportOpen && <Card className="chatgpt-import-card">
-            <div className="learning-card-title"><Sparkles /><div><strong>Bring the ChatGPT second pass back into this audit</strong><span>Paste ChatGPT’s complete JSON result here. After validation, this saved audit updates immediately and everything stays viewable in this app.</span></div></div>
-            <textarea className="learning-textarea" value={chatResult} onChange={(event) => { setChatResult(event.target.value); setChatImportError(undefined); }} placeholder="Paste the complete ChatGPT JSON result here…" />
+            <div className="learning-card-title"><Sparkles /><div><strong>Bring the ChatGPT second pass back into this audit</strong><span>Paste the full ChatGPT response here. The app always saves it. If it is valid structured JSON, the audit is updated too; otherwise the existing structured audit stays untouched.</span></div></div>
+            <textarea className="learning-textarea" value={chatResult} onChange={(event) => { setChatResult(event.target.value); setChatImportError(undefined); }} placeholder="Paste the full ChatGPT response here…" />
             {chatImportError && <div className="banner banner-error">{chatImportError}</div>}
-            <div className="form-actions"><Button variant="ghost" onClick={() => { setChatImportOpen(false); setChatImportError(undefined); }}>Cancel</Button><Button variant="secondary" onClick={() => void pasteChatGptFromClipboard()}>Paste from clipboard</Button><Button onClick={() => void applyChatGptResult()}>Apply ChatGPT version</Button></div>
+            <div className="form-actions"><Button variant="ghost" onClick={() => { setChatImportOpen(false); setChatImportError(undefined); }}>Cancel</Button><Button variant="secondary" onClick={() => void pasteChatGptFromClipboard()}>Paste from clipboard</Button><Button onClick={() => void applyChatGptResult()}>Save ChatGPT response</Button></div>
           </Card>}
 
-          <div className="learning-tabs">{(['overview','emotional','logical','social','patterns','blindspots'] as AuditTab[]).map((value) => <button key={value} className={tab === value ? 'active' : ''} onClick={() => setTab(value)}>{value}</button>)}</div>
+          <div className="learning-tabs">{(['overview','emotional','logical','social','patterns','blindspots'] as AuditTab[]).map((value) => <button key={value} className={tab === value ? 'active' : ''} onClick={() => setTab(value)}>{value}</button>)}{selected.chatGptOutput && <button className={tab === 'chatgpt' ? 'active' : ''} onClick={() => setTab('chatgpt')}>ChatGPT</button>}</div>
 
           {tab === 'overview' && <div className="learning-content-grid">
             <Card><h3>What worked</h3><ul>{selected.analysis.strengths.map((item, index) => <li key={index}>{item}</li>)}</ul></Card>
@@ -243,7 +257,8 @@ export function SocialAuditPage() {
             <Card><h3>Reflection questions</h3><ul>{selected.analysis.reflectionQuestions.map((item, index) => <li key={index}>{item}</li>)}</ul></Card>
             <Card><h3>What the transcript cannot tell us</h3><ul>{selected.analysis.uncertaintyNotes.map((item, index) => <li key={index}>{item}</li>)}</ul></Card>
           </div>}
-          {tab !== 'overview' && categoryValues && <ObservationList values={categoryValues[tab]} />}
+          {tab !== 'overview' && tab !== 'chatgpt' && categoryValues && <ObservationList values={categoryValues[tab]} />}
+          {tab === 'chatgpt' && <Card><h3>ChatGPT second pass</h3><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontFamily: 'inherit', lineHeight: 1.6, margin: 0 }}>{selected.chatGptOutput || 'No ChatGPT response has been saved for this audit yet.'}</pre></Card>}
         </div> : <Card className="learning-empty"><MessageCircleMore size={42} /><h2>Build a private communication library</h2><p>Each audit separates what was actually said from possible interpretations, then gives you norms, lessons and small experiments to learn from.</p></Card>}
       </section>
     </div>
