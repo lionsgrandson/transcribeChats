@@ -450,7 +450,7 @@ IMPORTANT RETURN CONTRACT:
 - Put the JSON inside one fenced \`\`\`json code block so copying it preserves characters exactly.
 - Keep exactly the same top-level structure and field names as LOCAL OLLAMA STUDY PACK.
 - Question type must be exactly one of: multiple_choice, short_answer, explain, code.
-- Task fields must be `instruction` and `successCriteria`, both strings, not arrays.
+- Task fields must be instruction and successCriteria, both strings, not arrays.
 - Preserve existing ids when an item still represents the same topic/question/task/flashcard so my learning progress can be preserved.
 - New items must get short unique string ids.
 - Do not add commentary before or after the JSON code block.
