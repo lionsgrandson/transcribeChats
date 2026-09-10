@@ -1,6 +1,7 @@
 import { ExternalLink } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { StudyEntry, StudyQuestion } from '../domain/learning';
+import '../study-interactive.css';
 import { Button, Card } from './ui';
 
 interface InteractiveQuestionSetProps {
@@ -119,14 +120,13 @@ export function TopicLearningLinks({ courseTitle, topicTitle }: TopicLearningLin
     const wikiQuery = encodeURIComponent(topicTitle);
     const programming = /typescript|javascript|react|node|html|css|web|api|programming|code|python|java|sql|git/i.test(combined);
 
-    const values = [
+    return [
       { label: 'Search the web', href: `https://www.google.com/search?q=${webQuery}` },
       { label: 'Find video lessons', href: `https://www.youtube.com/results?search_query=${youtubeQuery}` },
       programming
         ? { label: 'Search MDN / docs', href: `https://developer.mozilla.org/en-US/search?q=${wikiQuery}` }
         : { label: 'Search Wikipedia', href: `https://en.wikipedia.org/w/index.php?search=${wikiQuery}` }
     ];
-    return values;
   }, [courseTitle, topicTitle]);
 
   return <div className="study-resource-links">
