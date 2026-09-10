@@ -48,6 +48,8 @@ def _study_needs_expansion(pack: StudyAnalysis, transcript: str) -> bool:
         return True
     if len(pack.flashcards) < flashcards or len(pack.quiz) < quiz or len(pack.test) < test:
         return True
+    if any(question.type != "multiple_choice" or len(question.choices) < 3 for question in [*pack.quiz, *pack.test]):
+        return True
     if len(transcript.split()) >= 800 and any(len(topic.summary.split()) < 70 for topic in pack.topics):
         return True
     return False
@@ -70,13 +72,16 @@ Rules:
 - `commonMistakes` should explain likely misunderstandings and why they are wrong.
 - `prerequisites` should identify earlier topics that should be understood first.
 - Flashcards must cover the important definitions, distinctions, rules, syntax, edge cases, and common mistakes. Target AT LEAST {flashcards} useful cards when the transcript supports that much material.
-- Quiz must be a real checkpoint after learning. Target AT LEAST {quiz} questions with broad topic coverage.
-- Test must be a real final assessment, harder and broader than the quiz. Target AT LEAST {test} questions, mixing recall, explanation, application, edge cases, and code/reasoning where appropriate.
+- Quiz must be a real interactive checkpoint after learning. Target AT LEAST {quiz} questions with broad topic coverage.
+- Test must be a real interactive final assessment, harder and broader than the quiz. Target AT LEAST {test} questions using scenarios, application, edge cases, interpretation, debugging, and reasoning where appropriate.
+- EVERY quiz and test question MUST use type `multiple_choice`.
+- EVERY quiz and test question MUST contain exactly 4 useful choices with one best answer and plausible distractors.
+- For every multiple-choice question, `answer` MUST exactly equal the complete text of one item in `choices`. Do not answer with only a letter such as A or B.
+- Do not reveal the answer inside the prompt or choices.
 - Do not make the test a single-question self-check.
+- Move free-form coding, writing, implementation, and longer explanation work into Practice tasks instead of non-clickable test questions.
 - Practice tasks come AFTER learning and assessment. They should be hands-on exercises that prove the learner can apply the material. They are not substitutes for teaching notes.
-- Every question needs a correct answer and a teaching explanation.
-- Multiple-choice questions need plausible distractors and one best answer. Other question types use an empty choices list.
-- Keep question type to exactly one of: multiple_choice, short_answer, explain, code.
+- Every question needs a teaching explanation that explains why the correct option is right and, when useful, why tempting alternatives are wrong.
 - reviewScheduleDays should normally be [1,3,7,14,30].
 - Return only JSON matching this schema: {json.dumps(schema, ensure_ascii=False)}
 
@@ -97,7 +102,7 @@ async def create_study_pack(request: LearningRequest) -> StudyAnalysis:
     flashcards, quiz, test = _study_targets(request.transcript)
     prompt = f"""Build a complete self-contained course from this lecture/course transcript.
 
-The learner wants to study from THIS generated pack instead of rewatching the source. This is not a summary task. Teach the material first, then create active recall and assessment.
+The learner wants to study from THIS generated pack instead of rewatching the source. This is not a summary task. Teach the material first, then create active recall and interactive assessment.
 
 Rules:
 - Stay grounded in the source transcript. Do not invent course facts or silently add outside knowledge.
@@ -110,12 +115,15 @@ Rules:
 - Put likely misconceptions and their correction in `commonMistakes`.
 - Learning objectives must describe things the learner should be able to DO or EXPLAIN after studying.
 - Flashcards are mandatory when the transcript contains studyable facts. Target AT LEAST {flashcards} useful cards when supported, distributed across the substantive topics.
-- Quiz is mandatory when there is enough material. Target AT LEAST {quiz} questions and use it as a broad comprehension checkpoint after learning.
-- Test is mandatory when there is enough material. Target AT LEAST {test} questions and make it clearly harder than the quiz, covering explanation, application, edge cases, and code/reasoning when appropriate.
+- Quiz is mandatory when there is enough material. Target AT LEAST {quiz} questions and use it as a broad interactive comprehension checkpoint after learning.
+- Test is mandatory when there is enough material. Target AT LEAST {test} questions and make it clearly harder than the quiz, using scenarios, application, edge cases, interpretation, debugging, and reasoning where appropriate.
+- EVERY quiz and test question MUST use type `multiple_choice`.
+- EVERY quiz and test question MUST contain exactly 4 choices with one best answer and plausible distractors.
+- For every multiple-choice question, `answer` MUST exactly equal the complete text of one item in `choices`. Never return only `A`, `B`, `C`, or `D` as the answer.
+- Do not reveal the correct answer in the question prompt.
 - Never collapse a normal lesson into one quiz/test question.
-- Multiple-choice questions must have plausible distractors and exactly one best answer.
-- For short-answer/explain/code questions, choices must be an empty list.
-- Every question needs the correct answer and a teaching explanation.
+- Every question needs a teaching explanation that explains why the correct answer is right and clarifies likely misconceptions.
+- Put free-form coding, writing, implementation, and longer explanation work into Practice tasks, where the learner can actually do the work, rather than creating non-clickable quiz/test questions.
 - Practice tasks happen after learning. They must require observable work and include explicit success criteria. Do not use tasks as a replacement for the teaching material.
 - Include enough material to cover every substantive topic in the transcript without bloating trivial points.
 - reviewScheduleDays should normally be [1,3,7,14,30].
