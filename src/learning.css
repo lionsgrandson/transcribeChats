@@ -30,6 +30,15 @@
 .learning-source-tabs button:hover, .learning-tabs button:hover { border-color: #c9c6dd; color: var(--ink); }
 .learning-source-tabs button.active, .learning-tabs button.active { background: var(--primary-soft); border-color: #d7d3ff; color: var(--primary-dark); }
 .learning-textarea { min-height: 180px; }
+.selected-learning-media { display: flex; align-items: center; gap: 11px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-alt); }
+.selected-learning-media > svg { color: var(--primary); flex: 0 0 auto; }
+.selected-learning-media > div { min-width: 0; display: grid; gap: 2px; }
+.selected-learning-media strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selected-learning-media span { color: var(--muted); font-size: 12px; }
+.selected-learning-media button { margin-inline-start: auto; border: 0; background: transparent; color: var(--muted); padding: 7px 9px; border-radius: 8px; }
+.selected-learning-media button:hover { background: #eeeef5; color: var(--ink); }
+.chatgpt-import-card { display: grid; gap: 14px; border-color: #d7d3ff; background: linear-gradient(180deg, #fbfaff, #fff); box-shadow: none; }
+.chatgpt-import-card .learning-textarea { min-height: 210px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
 .learning-progress { display: grid; gap: 7px; }
 .learning-progress > div { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 13px; }
 .learning-progress progress { width: 100%; height: 9px; accent-color: var(--primary); }
@@ -100,4 +109,5 @@
   .question-card summary { grid-template-columns: 32px 1fr; }
   .question-card summary small { grid-column: 2; }
   .question-card ol { padding-inline-start: 54px; }
+  .selected-learning-media { align-items: flex-start; }
 }

@@ -1,11 +1,11 @@
-import { BookOpen, BrainCircuit, CheckCircle2, ExternalLink, FileText, FolderTree, Search, Sparkles, UploadCloud } from 'lucide-react';
+import { BookOpen, BrainCircuit, CheckCircle2, ExternalLink, FileText, FolderTree, Search, Sparkles, UploadCloud, Video } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Card, Field } from '../components/ui';
 import { db } from '../data/db';
 import type { StudyEntry } from '../domain/learning';
 import type { LanguageMode } from '../domain/types';
 import { createId } from '../lib/id';
-import { analyzeStudyWithOllama, buildStudyChatGptPrompt, copyAndOpenChatGpt } from '../services/learning';
+import { analyzeStudyWithOllama, buildStudyChatGptPrompt, copyAndOpenChatGpt, parseStudyChatGptResult } from '../services/learning';
 import { transcribeWithWorker } from '../services/worker';
 import { useAppStore } from '../state/AppStore';
 
@@ -14,6 +14,10 @@ type StudyTab = 'notes' | 'tasks' | 'flashcards' | 'quiz' | 'test';
 
 function parsePath(value: string): string[] {
   return value.split(/[>/\\]+/).map((part) => part.trim()).filter(Boolean);
+}
+
+function isSupportedMedia(candidate: File): boolean {
+  return candidate.type.startsWith('audio/') || candidate.type.startsWith('video/') || /\.(mp3|m4a|mp4|mov|wav|webm|mpeg|mpga|ogg|flac)$/i.test(candidate.name);
 }
 
 function normalizeEntry(entry: StudyEntry): StudyEntry {
@@ -52,6 +56,9 @@ export function StudyLibraryPage() {
   const [stage, setStage] = useState('');
   const [error, setError] = useState<string>();
   const [tab, setTab] = useState<StudyTab>('notes');
+  const [chatImportOpen, setChatImportOpen] = useState(false);
+  const [chatResult, setChatResult] = useState('');
+  const [chatImportError, setChatImportError] = useState<string>();
 
   const reload = async () => {
     const values = (await db.studyEntries.orderBy('updatedAt').reverse().toArray()).map(normalizeEntry);
@@ -67,6 +74,21 @@ export function StudyLibraryPage() {
     if (!needle) return entries;
     return entries.filter((entry) => `${entry.path.join(' ')} ${entry.title} ${entry.analysis.overview}`.toLocaleLowerCase().includes(needle));
   }, [entries, query]);
+
+  const chooseMedia = (candidate?: File) => {
+    setError(undefined);
+    if (!candidate) return setFile(undefined);
+    if (!isSupportedMedia(candidate)) {
+      setFile(undefined);
+      return setError('Choose a supported video or audio file. Video: MP4, MOV, WebM, MPEG. Audio: MP3, M4A, WAV, OGG, FLAC.');
+    }
+    if (candidate.size > 2 * 1024 * 1024 * 1024) {
+      setFile(undefined);
+      return setError('The selected video/audio file is larger than the 2 GB local worker limit.');
+    }
+    setFile(candidate);
+    if (!title) setTitle(candidate.name.replace(/\.[^.]+$/, ''));
+  };
 
   const createStudyPack = async () => {
     setBusy(true); setError(undefined); setProgress(0); setStage('Preparing source');
@@ -89,7 +111,7 @@ export function StudyLibraryPage() {
         resolvedTitle ||= 'Study notes';
         setProgress(70); setStage('Building study pack with Ollama');
       } else {
-        if (!file) throw new Error('Choose an audio or video file first.');
+        if (!file) throw new Error('Choose a video or audio file first.');
         if (workerReady === false) throw new Error('The local transcription worker is not available. Start it before importing media.');
         sourceName = file.name;
         resolvedTitle ||= file.name.replace(/\.[^.]+$/, '');
@@ -164,10 +186,55 @@ export function StudyLibraryPage() {
   const improveWithChatGpt = async () => {
     if (!selected) return;
     try {
+      setChatImportOpen(true);
+      setChatImportError(undefined);
       await copyAndOpenChatGpt(buildStudyChatGptPrompt(selected.title, selected.transcript, selected.analysis));
-      showToast('Full study context copied. Paste it into the ChatGPT tab that opened.');
+      showToast('Full study context copied. Paste it into ChatGPT, then paste ChatGPT’s JSON result back here.');
     } catch {
       setError('Could not copy the ChatGPT handoff. Your browser may have blocked clipboard access.');
+    }
+  };
+
+  const pasteChatGptFromClipboard = async () => {
+    try {
+      const value = await navigator.clipboard.readText();
+      if (!value.trim()) throw new Error('Clipboard is empty.');
+      setChatResult(value);
+      setChatImportError(undefined);
+    } catch (reason) {
+      setChatImportError(reason instanceof Error ? reason.message : 'Could not read the clipboard. You can paste into the box manually.');
+    }
+  };
+
+  const applyChatGptResult = async () => {
+    if (!selected) return;
+    try {
+      const analysis = parseStudyChatGptResult(chatResult);
+      const validTopics = new Set(analysis.topics.map((item) => item.id));
+      const validTasks = new Set(analysis.tasks.map((item) => item.id));
+      const validQuestions = new Set([...analysis.quiz, ...analysis.test].map((item) => item.id));
+      const preservedQuestionResults = Object.fromEntries(
+        Object.entries(selected.questionResults).filter(([id]) => validQuestions.has(id))
+      ) as Record<string, 'correct' | 'incorrect'>;
+      const now = new Date().toISOString();
+      await db.studyEntries.update(selected.id, {
+        title: analysis.title || selected.title,
+        path: selected.path.length ? selected.path : analysis.suggestedPath,
+        analysis,
+        masteredTopicIds: selected.masteredTopicIds.filter((id) => validTopics.has(id)),
+        completedTaskIds: selected.completedTaskIds.filter((id) => validTasks.has(id)),
+        questionResults: preservedQuestionResults,
+        updatedAt: now,
+        lastReviewedAt: now,
+        chatGptRefinedAt: now
+      });
+      await reload();
+      setChatResult('');
+      setChatImportOpen(false);
+      setChatImportError(undefined);
+      showToast('ChatGPT study pass imported. The refined pack is now the version shown in your library.');
+    } catch (reason) {
+      setChatImportError(reason instanceof Error ? reason.message : 'That ChatGPT result could not be imported.');
     }
   };
 
@@ -197,28 +264,37 @@ export function StudyLibraryPage() {
 
       <section className="learning-main">
         <Card className="learning-create-card">
-          <div className="learning-card-title"><Sparkles /><div><strong>Create a study pack</strong><span>Ollama runs locally. Use an existing transcript or bring new material in.</span></div></div>
+          <div className="learning-card-title"><Sparkles /><div><strong>Create a study pack</strong><span>Ollama runs locally. Upload a lecture video or audio file, use an existing transcript, or paste notes.</span></div></div>
           <div className="learning-source-tabs">
             <button className={sourceMode === 'existing' ? 'active' : ''} onClick={() => setSourceMode('existing')}><BookOpen size={16} />Existing transcript</button>
-            <button className={sourceMode === 'upload' ? 'active' : ''} onClick={() => setSourceMode('upload')}><UploadCloud size={16} />Audio / video</button>
+            <button className={sourceMode === 'upload' ? 'active' : ''} onClick={() => setSourceMode('upload')}><Video size={16} />Video / audio</button>
             <button className={sourceMode === 'text' ? 'active' : ''} onClick={() => setSourceMode('text')}><FileText size={16} />Paste text</button>
           </div>
           <div className="form-grid two-columns">
             {sourceMode === 'existing' && <Field label="Transcript"><select value={sourceId} onChange={(event) => { setSourceId(event.target.value); const source = readyTranscripts.find((item) => item.id === event.target.value); if (source && !title) setTitle(source.title); }}><option value="">Choose transcript…</option>{readyTranscripts.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></Field>}
-            {sourceMode === 'upload' && <Field label="Media file"><input type="file" accept="audio/*,video/*,.mp3,.m4a,.mp4,.mov,.wav,.webm" onChange={(event) => { const next = event.target.files?.[0]; setFile(next); if (next && !title) setTitle(next.name.replace(/\.[^.]+$/, '')); }} /></Field>}
+            {sourceMode === 'upload' && <Field label="Video or audio file" hint="Video: MP4, MOV, WebM, MPEG · Audio: MP3, M4A, WAV, OGG, FLAC"><input type="file" accept="video/mp4,video/quicktime,video/webm,video/mpeg,audio/*,.mp4,.mov,.webm,.mpeg,.mp3,.m4a,.wav,.ogg,.flac" onChange={(event) => chooseMedia(event.target.files?.[0])} /></Field>}
             {sourceMode === 'upload' && <Field label="Language"><select value={languageMode} onChange={(event) => setLanguageMode(event.target.value as LanguageMode)}><option value="auto">Auto</option><option value="en">English</option><option value="he">Hebrew</option><option value="mixed">Mixed Hebrew / English</option></select></Field>}
             <Field label="Title"><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Java — Classes lesson 3" /></Field>
             <Field label="Library path" hint="Optional. Ollama can suggest it."><input value={pathText} onChange={(event) => setPathText(event.target.value)} placeholder="Java / Classes / Inheritance" /></Field>
           </div>
+          {sourceMode === 'upload' && file && <div className="selected-learning-media"><Video size={20} /><div><strong>{file.name}</strong><span>{(file.size / 1024 / 1024).toFixed(1)} MB · {file.type.startsWith('video/') ? 'Video' : 'Audio'}</span></div><button type="button" onClick={() => setFile(undefined)}>Remove</button></div>}
           {sourceMode === 'text' && <Field label="Study material"><textarea className="learning-textarea" value={text} onChange={(event) => setText(event.target.value)} placeholder="Paste lecture transcript, notes, course material…" /></Field>}
           <Field label="Context" hint="Optional: course name, lecturer terms, what you are trying to master."><input value={context} onChange={(event) => setContext(event.target.value)} placeholder="Course: Java fundamentals · Focus: OOP and exam preparation" /></Field>
           {(busy || progress > 0) && <div className="learning-progress"><div><span>{stage}</span><strong>{progress}%</strong></div><progress max="100" value={progress} /></div>}
           {error && <div className="banner banner-error">{error}</div>}
-          <div className="form-actions"><Button busy={busy} onClick={() => void createStudyPack()}><Sparkles size={17} />Transcribe + build learning pack</Button></div>
+          <div className="form-actions"><Button busy={busy} onClick={() => void createStudyPack()}><UploadCloud size={17} />{sourceMode === 'upload' ? 'Transcribe video/audio + build study pack' : 'Build learning pack'}</Button></div>
         </Card>
 
         {selected ? <div className="learning-result">
-          <div className="learning-result-head"><div><small>{selected.path.join(' / ') || 'Unsorted'}</small><h2>{selected.title}</h2><p>{selected.analysis.overview}</p><div className="mastery-summary"><span><strong>{masteryPercent(selected)}%</strong> mastered</span><progress max="100" value={masteryPercent(selected)} /></div></div><div className="learning-result-actions"><Button variant="secondary" onClick={() => void improveWithChatGpt()}><ExternalLink size={16} />Improve with ChatGPT</Button><Button variant="ghost" onClick={() => void removeSelected()}>Delete</Button></div></div>
+          <div className="learning-result-head"><div><small>{selected.path.join(' / ') || 'Unsorted'}{selected.chatGptRefinedAt ? ' · ChatGPT refined' : ''}</small><h2>{selected.title}</h2><p>{selected.analysis.overview}</p><div className="mastery-summary"><span><strong>{masteryPercent(selected)}%</strong> mastered</span><progress max="100" value={masteryPercent(selected)} /></div></div><div className="learning-result-actions"><Button variant="secondary" onClick={() => void improveWithChatGpt()}><ExternalLink size={16} />Second pass with ChatGPT</Button><Button variant="secondary" onClick={() => { setChatImportOpen(true); setChatImportError(undefined); }}>Paste ChatGPT result</Button><Button variant="ghost" onClick={() => void removeSelected()}>Delete</Button></div></div>
+
+          {chatImportOpen && <Card className="chatgpt-import-card">
+            <div className="learning-card-title"><Sparkles /><div><strong>Bring the ChatGPT second pass back into this study pack</strong><span>Copy ChatGPT’s complete JSON result, paste it here, and it replaces the displayed Ollama pack after validation. Your transcript stays unchanged.</span></div></div>
+            <textarea className="learning-textarea" value={chatResult} onChange={(event) => { setChatResult(event.target.value); setChatImportError(undefined); }} placeholder="Paste the complete ChatGPT JSON result here…" />
+            {chatImportError && <div className="banner banner-error">{chatImportError}</div>}
+            <div className="form-actions"><Button variant="ghost" onClick={() => { setChatImportOpen(false); setChatImportError(undefined); }}>Cancel</Button><Button variant="secondary" onClick={() => void pasteChatGptFromClipboard()}>Paste from clipboard</Button><Button onClick={() => void applyChatGptResult()}>Apply ChatGPT version</Button></div>
+          </Card>}
+
           <div className="learning-tabs">{(['notes','tasks','flashcards','quiz','test'] as StudyTab[]).map((value) => <button key={value} className={tab === value ? 'active' : ''} onClick={() => setTab(value)}>{value}</button>)}</div>
 
           {tab === 'notes' && <div className="learning-content-grid">

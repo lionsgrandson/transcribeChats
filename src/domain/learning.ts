@@ -65,6 +65,7 @@ export interface StudyEntry {
   createdAt: string;
   updatedAt: string;
   lastReviewedAt?: string;
+  chatGptRefinedAt?: string;
 }
 
 export interface SocialAuditObservation {
@@ -99,4 +100,5 @@ export interface SocialAuditEntry {
   analysis: SocialAuditAnalysis;
   createdAt: string;
   updatedAt: string;
+  chatGptRefinedAt?: string;
 }

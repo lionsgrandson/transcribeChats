@@ -76,6 +76,37 @@ async function postJson<T>(workerUrl: string, path: string, body: unknown, schem
   return schema.parse(await response.json());
 }
 
+function parseChatGptJson(value: string): unknown {
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error('Paste the ChatGPT result first.');
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // ChatGPT may wrap the replacement object in a JSON code fence.
+  }
+
+  const fenced = [...trimmed.matchAll(/```json\s*([\s\S]*?)```/gi)];
+  for (const match of fenced.reverse()) {
+    try {
+      return JSON.parse(match[1].trim());
+    } catch {
+      // Try another fenced block or the broad object fallback below.
+    }
+  }
+
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try {
+      return JSON.parse(trimmed.slice(start, end + 1));
+    } catch {
+      // Fall through to the clearer error below.
+    }
+  }
+  throw new Error('I could not find a valid JSON study/audit result in that ChatGPT response. Ask ChatGPT to return the complete replacement JSON object and paste it again.');
+}
+
 export function analyzeStudyWithOllama(workerUrl: string, input: { title: string; transcript: string; context: string }): Promise<StudyAnalysis> {
   return postJson(workerUrl, '/v1/study', input, studySchema);
 }
@@ -84,12 +115,53 @@ export function analyzeSocialAuditWithOllama(workerUrl: string, input: { title: 
   return postJson(workerUrl, '/v1/social-audit', input, socialAuditSchema);
 }
 
+export function parseStudyChatGptResult(value: string): StudyAnalysis {
+  return studySchema.parse(parseChatGptJson(value));
+}
+
+export function parseSocialAuditChatGptResult(value: string): SocialAuditAnalysis {
+  return socialAuditSchema.parse(parseChatGptJson(value));
+}
+
 export function buildStudyChatGptPrompt(title: string, transcript: string, analysis: StudyAnalysis): string {
-  return `You are my expert tutor and curriculum designer. Improve this locally generated study pack without deleting useful material. Correct mistakes against the transcript, improve the hierarchy, add missing active-recall questions, make the test genuinely challenging, and make the practice tasks prove mastery rather than passive reading. Keep claims grounded in the source.\n\nTITLE:\n${title}\n\nLOCAL OLLAMA STUDY PACK:\n${JSON.stringify(analysis, null, 2)}\n\nSOURCE TRANSCRIPT:\n${transcript}`;
+  return `You are my expert tutor and curriculum designer. Improve this locally generated study pack without deleting useful material. Correct mistakes against the transcript, improve the hierarchy, add missing active-recall questions, make the test genuinely challenging, and make the practice tasks prove mastery rather than passive reading. Keep claims grounded in the source.
+
+IMPORTANT RETURN CONTRACT:
+- Return the COMPLETE replacement study pack as one valid JSON object only.
+- Keep exactly the same top-level structure and field names as LOCAL OLLAMA STUDY PACK.
+- Preserve existing ids when an item still represents the same topic/question/task/flashcard so my learning progress can be preserved.
+- New items must get short unique string ids.
+- Do not add commentary before or after the JSON.
+- Do not omit arrays just because they are empty.
+
+TITLE:
+${title}
+
+LOCAL OLLAMA STUDY PACK:
+${JSON.stringify(analysis, null, 2)}
+
+SOURCE TRANSCRIPT:
+${transcript}`;
 }
 
 export function buildAuditChatGptPrompt(title: string, transcript: string, analysis: SocialAuditAnalysis): string {
-  return `Review this conversation audit as a careful coach. Improve the emotional, logical, and social analysis while staying evidence-based. Do not diagnose anyone, do not claim hidden intent as fact, distinguish observation from interpretation, add plausible alternative explanations, and focus on habits, social norms, communication choices, and practical lessons I can test.\n\nTITLE:\n${title}\n\nLOCAL OLLAMA AUDIT:\n${JSON.stringify(analysis, null, 2)}\n\nSOURCE TRANSCRIPT:\n${transcript}`;
+  return `Review this conversation audit as a careful coach. Improve the emotional, logical, and social analysis while staying evidence-based. Do not diagnose anyone, do not claim hidden intent as fact, distinguish observation from interpretation, add plausible alternative explanations, and focus on habits, social norms, communication choices, and practical lessons I can test.
+
+IMPORTANT RETURN CONTRACT:
+- Return the COMPLETE replacement audit as one valid JSON object only.
+- Keep exactly the same top-level structure and field names as LOCAL OLLAMA AUDIT.
+- Keep confidence values between 0 and 1.
+- Do not add commentary before or after the JSON.
+- Do not omit arrays just because they are empty.
+
+TITLE:
+${title}
+
+LOCAL OLLAMA AUDIT:
+${JSON.stringify(analysis, null, 2)}
+
+SOURCE TRANSCRIPT:
+${transcript}`;
 }
 
 export async function copyAndOpenChatGpt(prompt: string): Promise<void> {
