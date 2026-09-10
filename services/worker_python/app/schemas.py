@@ -66,6 +66,22 @@ class LearningRequest(BaseModel):
     context: str = ""
 
 
+class YouTubeImportRequest(BaseModel):
+    url: str
+    language_mode: Literal["auto", "en", "he", "mixed"] = "auto"
+    context: str = ""
+
+
+class YouTubeImportResponse(BaseModel):
+    title: str
+    sourceName: str
+    transcript: str
+    method: Literal["captions", "whisper"]
+    videoId: str
+    webpageUrl: str
+    durationSeconds: int | None = None
+
+
 class StudyTopic(BaseModel):
     id: str
     title: str
