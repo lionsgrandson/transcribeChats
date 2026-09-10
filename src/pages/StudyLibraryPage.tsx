@@ -2,10 +2,10 @@ import { BookOpen, BrainCircuit, CheckCircle2, ExternalLink, FileText, FolderTre
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Card, Field } from '../components/ui';
 import { db } from '../data/db';
-import type { StudyEntry } from '../domain/learning';
+import type { StudyAnalysis, StudyEntry } from '../domain/learning';
 import type { LanguageMode } from '../domain/types';
 import { createId } from '../lib/id';
-import { analyzeStudyWithOllama, buildStudyChatGptPrompt, copyAndOpenChatGpt, importYouTubeTranscript, parseStudyChatGptResult } from '../services/learning';
+import { analyzeStudyWithOllama, buildStudyChatGptPrompt, copyAndOpenChatGpt, importYouTubeTranscript, parseStudyChatGptResult, repairStudyChatGptResult } from '../services/learning';
 import { transcribeWithWorker } from '../services/worker';
 import { useAppStore } from '../state/AppStore';
 
@@ -60,6 +60,8 @@ export function StudyLibraryPage() {
   const [chatImportOpen, setChatImportOpen] = useState(false);
   const [chatResult, setChatResult] = useState('');
   const [chatImportError, setChatImportError] = useState<string>();
+  const [chatImportBusy, setChatImportBusy] = useState(false);
+  const [chatImportStage, setChatImportStage] = useState('');
 
   const reload = async () => {
     const values = (await db.studyEntries.orderBy('updatedAt').reverse().toArray()).map(normalizeEntry);
@@ -203,69 +205,99 @@ export function StudyLibraryPage() {
     try {
       setChatImportOpen(true);
       setChatImportError(undefined);
+      setChatImportStage('');
       await copyAndOpenChatGpt(buildStudyChatGptPrompt(selected.title, selected.transcript, selected.analysis));
-      showToast('Full study context copied. Paste it into ChatGPT, then paste the full ChatGPT response back here.');
+      showToast('Full study context copied. Paste it into ChatGPT, then use Paste + apply when you copy the answer back.');
     } catch {
       setError('Could not copy the ChatGPT handoff. Your browser may have blocked clipboard access.');
     }
   };
 
-  const pasteChatGptFromClipboard = async () => {
+  const saveStructuredChatGptStudy = async (analysis: StudyAnalysis, rawOutput: string, now: string) => {
+    if (!selected) return;
+    const validTopics = new Set(analysis.topics.map((item) => item.id));
+    const validTasks = new Set(analysis.tasks.map((item) => item.id));
+    const validQuestions = new Set([...analysis.quiz, ...analysis.test].map((item) => item.id));
+    const preservedQuestionResults = Object.fromEntries(
+      Object.entries(selected.questionResults).filter(([id]) => validQuestions.has(id))
+    ) as Record<string, 'correct' | 'incorrect'>;
+    await db.studyEntries.update(selected.id, {
+      title: analysis.title || selected.title,
+      path: selected.path.length ? selected.path : analysis.suggestedPath,
+      analysis,
+      masteredTopicIds: selected.masteredTopicIds.filter((id) => validTopics.has(id)),
+      completedTaskIds: selected.completedTaskIds.filter((id) => validTasks.has(id)),
+      questionResults: preservedQuestionResults,
+      updatedAt: now,
+      lastReviewedAt: now,
+      chatGptRefinedAt: now,
+      chatGptOutput: rawOutput
+    });
+  };
+
+  const importChatGptResponse = async (value: string) => {
+    if (!selected || chatImportBusy) return;
+    const rawOutput = value.trim();
+    if (!rawOutput) return setChatImportError('Paste the ChatGPT response first.');
+
+    setChatImportBusy(true);
+    setChatImportError(undefined);
+    setChatImportStage('Checking ChatGPT response format');
+    const now = new Date().toISOString();
+
+    try {
+      await db.studyEntries.update(selected.id, {
+        updatedAt: now,
+        lastReviewedAt: now,
+        chatGptRefinedAt: now,
+        chatGptOutput: rawOutput
+      });
+
+      let analysis: StudyAnalysis;
+      let repairedLocally = false;
+      try {
+        analysis = parseStudyChatGptResult(rawOutput);
+      } catch {
+        if (workerReady === false) throw new Error('The ChatGPT response was saved, but the local worker is offline so it could not be repaired into the structured study tabs.');
+        setChatImportStage('Formatting response locally with Ollama');
+        analysis = await repairStudyChatGptResult(settings.workerUrl, { title: selected.title, response: rawOutput });
+        repairedLocally = true;
+      }
+
+      setChatImportStage('Applying refined study pack');
+      await saveStructuredChatGptStudy(analysis, rawOutput, now);
+      await reload();
+      setChatResult('');
+      setChatImportOpen(false);
+      setTab('notes');
+      showToast(repairedLocally
+        ? 'ChatGPT response repaired locally and applied to the study pack.'
+        : 'ChatGPT study pass applied to the structured study pack.');
+    } catch (reason) {
+      await reload();
+      setChatImportOpen(false);
+      setTab('chatgpt');
+      const message = reason instanceof Error ? reason.message : 'The structured import could not be completed.';
+      showToast(`${message} The full ChatGPT response is still saved under the ChatGPT tab.`);
+    } finally {
+      setChatImportBusy(false);
+      setChatImportStage('');
+    }
+  };
+
+  const pasteAndApplyChatGptFromClipboard = async () => {
     try {
       const value = await navigator.clipboard.readText();
       if (!value.trim()) throw new Error('Clipboard is empty.');
       setChatResult(value);
-      setChatImportError(undefined);
+      await importChatGptResponse(value);
     } catch (reason) {
       setChatImportError(reason instanceof Error ? reason.message : 'Could not read the clipboard. You can paste into the box manually.');
     }
   };
 
   const applyChatGptResult = async () => {
-    if (!selected) return;
-    const rawOutput = chatResult.trim();
-    if (!rawOutput) return setChatImportError('Paste the ChatGPT response first.');
-    const now = new Date().toISOString();
-    let structuredImported = false;
-
-    try {
-      const analysis = parseStudyChatGptResult(rawOutput);
-      const validTopics = new Set(analysis.topics.map((item) => item.id));
-      const validTasks = new Set(analysis.tasks.map((item) => item.id));
-      const validQuestions = new Set([...analysis.quiz, ...analysis.test].map((item) => item.id));
-      const preservedQuestionResults = Object.fromEntries(
-        Object.entries(selected.questionResults).filter(([id]) => validQuestions.has(id))
-      ) as Record<string, 'correct' | 'incorrect'>;
-      await db.studyEntries.update(selected.id, {
-        title: analysis.title || selected.title,
-        path: selected.path.length ? selected.path : analysis.suggestedPath,
-        analysis,
-        masteredTopicIds: selected.masteredTopicIds.filter((id) => validTopics.has(id)),
-        completedTaskIds: selected.completedTaskIds.filter((id) => validTasks.has(id)),
-        questionResults: preservedQuestionResults,
-        updatedAt: now,
-        lastReviewedAt: now,
-        chatGptRefinedAt: now,
-        chatGptOutput: rawOutput
-      });
-      structuredImported = true;
-    } catch {
-      await db.studyEntries.update(selected.id, {
-        updatedAt: now,
-        lastReviewedAt: now,
-        chatGptRefinedAt: now,
-        chatGptOutput: rawOutput
-      });
-    }
-
-    await reload();
-    setChatResult('');
-    setChatImportOpen(false);
-    setChatImportError(undefined);
-    setTab('chatgpt');
-    showToast(structuredImported
-      ? 'ChatGPT study pass imported and the full response was saved.'
-      : 'ChatGPT response saved exactly as pasted. The structured Ollama pack was left unchanged.');
+    await importChatGptResponse(chatResult);
   };
 
   const removeSelected = async () => {
@@ -319,13 +351,14 @@ export function StudyLibraryPage() {
         </Card>
 
         {selected ? <div className="learning-result">
-          <div className="learning-result-head"><div><small>{selected.path.join(' / ') || 'Unsorted'}{selected.chatGptRefinedAt ? ' · ChatGPT refined' : ''}</small><h2>{selected.title}</h2><p>{selected.analysis.overview}</p><div className="mastery-summary"><span><strong>{masteryPercent(selected)}%</strong> mastered</span><progress max="100" value={masteryPercent(selected)} /></div></div><div className="learning-result-actions"><Button variant="secondary" onClick={() => void improveWithChatGpt()}><ExternalLink size={16} />Second pass with ChatGPT</Button><Button variant="secondary" onClick={() => { setChatImportOpen(true); setChatImportError(undefined); }}>Paste ChatGPT result</Button><Button variant="ghost" onClick={() => void removeSelected()}>Delete</Button></div></div>
+          <div className="learning-result-head"><div><small>{selected.path.join(' / ') || 'Unsorted'}{selected.chatGptRefinedAt ? ' · ChatGPT refined' : ''}</small><h2>{selected.title}</h2><p>{selected.analysis.overview}</p><div className="mastery-summary"><span><strong>{masteryPercent(selected)}%</strong> mastered</span><progress max="100" value={masteryPercent(selected)} /></div></div><div className="learning-result-actions"><Button variant="secondary" onClick={() => void improveWithChatGpt()}><ExternalLink size={16} />Second pass with ChatGPT</Button><Button variant="secondary" onClick={() => { setChatImportOpen(true); setChatImportError(undefined); setChatImportStage(''); }}>Paste ChatGPT result</Button><Button variant="ghost" onClick={() => void removeSelected()}>Delete</Button></div></div>
 
           {chatImportOpen && <Card className="chatgpt-import-card">
-            <div className="learning-card-title"><Sparkles /><div><strong>Bring the ChatGPT second pass back into this study pack</strong><span>Paste the full ChatGPT response here. The app always saves it. If it is valid structured JSON, the study pack is updated too; otherwise the existing structured pack stays untouched.</span></div></div>
-            <textarea className="learning-textarea" value={chatResult} onChange={(event) => { setChatResult(event.target.value); setChatImportError(undefined); }} placeholder="Paste the full ChatGPT response here…" />
+            <div className="learning-card-title"><Sparkles /><div><strong>Bring the ChatGPT second pass back into this study pack</strong><span>Paste the full response. If its formatting is messy, the local Ollama worker repairs it into the exact study structure automatically, while the original ChatGPT response is always saved.</span></div></div>
+            <textarea className="learning-textarea" value={chatResult} disabled={chatImportBusy} onChange={(event) => { setChatResult(event.target.value); setChatImportError(undefined); }} placeholder="Paste the full ChatGPT response here…" />
+            {chatImportBusy && <div className="learning-progress"><div><span>{chatImportStage}</span><strong>Working…</strong></div><progress /></div>}
             {chatImportError && <div className="banner banner-error">{chatImportError}</div>}
-            <div className="form-actions"><Button variant="ghost" onClick={() => { setChatImportOpen(false); setChatImportError(undefined); }}>Cancel</Button><Button variant="secondary" onClick={() => void pasteChatGptFromClipboard()}>Paste from clipboard</Button><Button onClick={() => void applyChatGptResult()}>Save ChatGPT response</Button></div>
+            <div className="form-actions"><Button variant="ghost" disabled={chatImportBusy} onClick={() => { setChatImportOpen(false); setChatImportError(undefined); setChatImportStage(''); }}>Cancel</Button><Button variant="secondary" busy={chatImportBusy} onClick={() => void pasteAndApplyChatGptFromClipboard()}>Paste + apply from clipboard</Button><Button busy={chatImportBusy} onClick={() => void applyChatGptResult()}>Apply pasted response</Button></div>
           </Card>}
 
           <div className="learning-tabs">{(['notes','tasks','flashcards','quiz','test'] as StudyTab[]).map((value) => <button key={value} className={tab === value ? 'active' : ''} onClick={() => setTab(value)}>{value}</button>)}{selected.chatGptOutput && <button className={tab === 'chatgpt' ? 'active' : ''} onClick={() => setTab('chatgpt')}>ChatGPT</button>}</div>

@@ -66,6 +66,11 @@ class LearningRequest(BaseModel):
     context: str = ""
 
 
+class ChatGptRepairRequest(BaseModel):
+    title: str = ""
+    response: str = Field(min_length=1)
+
+
 class YouTubeImportRequest(BaseModel):
     url: str
     language_mode: Literal["auto", "en", "he", "mixed"] = "auto"

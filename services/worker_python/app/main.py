@@ -9,10 +9,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .analysis import analyze as analyze_segments
 from .engine import diarization_available, model_loaded, release_model, transcribe
-from .learning import create_social_audit, create_study_pack
+from .learning import (
+    create_social_audit,
+    create_study_pack,
+    repair_audit_chatgpt_output,
+    repair_study_chatgpt_output,
+)
 from .schemas import (
     Analysis,
     AnalysisRequest,
+    ChatGptRepairRequest,
     HealthResponse,
     LearningRequest,
     SocialAuditAnalysis,
@@ -30,7 +36,7 @@ logger = logging.getLogger("transcribe-chats.worker")
 jobs: dict[str, TranscriptionJobStatus] = {}
 job_semaphore = asyncio.Semaphore(1)
 
-app = FastAPI(title="TranscribeChats Worker", version="0.8.0", docs_url="/docs")
+app = FastAPI(title="TranscribeChats Worker", version="0.9.0", docs_url="/docs")
 app.add_middleware(CORSMiddleware, allow_origins=settings.origins, allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["*"])
 
 
@@ -161,6 +167,30 @@ async def import_youtube(request: YouTubeImportRequest) -> YouTubeImportResponse
     except Exception as error:
         logger.exception("YouTube import failed")
         raise HTTPException(status_code=502, detail=f"YouTube import failed: {error}") from error
+
+
+@app.post("/v1/chatgpt/repair-study", response_model=StudyAnalysis)
+async def repair_chatgpt_study(request: ChatGptRepairRequest) -> StudyAnalysis:
+    if not request.response.strip():
+        raise HTTPException(status_code=400, detail="A ChatGPT response is required before repair.")
+    release_model()
+    try:
+        return await repair_study_chatgpt_output(request)
+    except Exception as error:
+        logger.exception("ChatGPT study repair failed")
+        raise HTTPException(status_code=502, detail=f"ChatGPT study repair failed: {error}") from error
+
+
+@app.post("/v1/chatgpt/repair-audit", response_model=SocialAuditAnalysis)
+async def repair_chatgpt_audit(request: ChatGptRepairRequest) -> SocialAuditAnalysis:
+    if not request.response.strip():
+        raise HTTPException(status_code=400, detail="A ChatGPT response is required before repair.")
+    release_model()
+    try:
+        return await repair_audit_chatgpt_output(request)
+    except Exception as error:
+        logger.exception("ChatGPT audit repair failed")
+        raise HTTPException(status_code=502, detail=f"ChatGPT audit repair failed: {error}") from error
 
 
 @app.post("/v1/study", response_model=StudyAnalysis)

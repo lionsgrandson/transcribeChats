@@ -1,5 +1,69 @@
 import { describe, expect, it } from 'vitest';
-import { parseSocialAuditChatGptResult } from './learning';
+import { parseSocialAuditChatGptResult, parseStudyChatGptResult } from './learning';
+
+describe('ChatGPT study import', () => {
+  it('normalizes common ChatGPT study variations before validation', () => {
+    const result = parseStudyChatGptResult(JSON.stringify({
+      title: 'TypeScript lesson',
+      suggestedPath: ['TypeScript', 'Generics'],
+      overview: 'A focused lesson.',
+      learningObjectives: ['Explain generic relationships.'],
+      topics: [{
+        id: 'generics',
+        title: 'Generics',
+        summary: 'Generics preserve relationships.',
+        keyPoints: ['T can connect input and output types.'],
+        examples: ['function first<T>(items: T[]): T | undefined'],
+        commonMistakes: ['Replacing T with any.'],
+        prerequisites: ['functions']
+      }],
+      flashcards: [{
+        id: 'generic-card',
+        topicId: 'generics',
+        front: 'Why use T?',
+        back: 'To preserve a type relationship.',
+        difficulty: 'hard'
+      }],
+      quiz: [{
+        id: 'q1',
+        topicId: 'generics',
+        type: 'multiple-choice',
+        prompt: 'What does T preserve?',
+        choices: ['A relationship', 'Runtime validation'],
+        answer: 'A relationship',
+        explanation: 'The generic connects type positions.',
+        difficulty: 'medium'
+      }],
+      test: [{
+        id: 't1',
+        topicId: 'generics',
+        type: 'code_reasoning',
+        prompt: 'Explain why first<T> is safer than any.',
+        choices: ['This should be removed for non-MCQ questions'],
+        answer: 'It preserves the element type.',
+        explanation: 'The return type follows the input element type.',
+        difficulty: 'advanced'
+      }],
+      tasks: [{
+        id: 'task1',
+        topicId: 'generics',
+        title: 'Build a helper',
+        instructions: ['Write a generic helper.', 'Test it with two types.'],
+        successCriteria: ['No any is used.', 'Both calls infer correctly.'],
+        difficulty: 'hard'
+      }],
+      reviewScheduleDays: [1, 3, 7, 14]
+    }));
+
+    expect(result.quiz[0].type).toBe('multiple_choice');
+    expect(result.test[0].type).toBe('code');
+    expect(result.test[0].choices).toEqual([]);
+    expect(result.test[0].difficulty).toBe('hard');
+    expect(result.tasks[0].instruction).toBe('Write a generic helper.\nTest it with two types.');
+    expect(result.tasks[0].successCriteria).toBe('No any is used.\nBoth calls infer correctly.');
+    expect(result.reviewScheduleDays).toEqual([1, 3, 7, 14]);
+  });
+});
 
 describe('ChatGPT conversation audit import', () => {
   it('normalizes common ChatGPT field variations before validation', () => {
