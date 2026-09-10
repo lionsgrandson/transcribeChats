@@ -31,29 +31,94 @@ async def _structured(prompt: str, schema_model):
         return schema_model.model_validate_json(content)
 
 
-async def create_study_pack(request: LearningRequest) -> StudyAnalysis:
-    schema = StudyAnalysis.model_json_schema()
-    prompt = f"""You are building a high-quality personal study library from a lecture/course transcript.
+def _study_targets(transcript: str) -> tuple[int, int, int]:
+    words = len(transcript.split())
+    if words < 600:
+        return 6, 4, 5
+    if words < 1800:
+        return 10, 6, 8
+    if words < 5000:
+        return 14, 8, 10
+    return 18, 10, 12
 
-Your job is not merely to summarize. Build material that makes the learner prove mastery through active recall and practice.
+
+def _study_needs_expansion(pack: StudyAnalysis, transcript: str) -> bool:
+    flashcards, quiz, test = _study_targets(transcript)
+    if not pack.topics:
+        return True
+    if len(pack.flashcards) < flashcards or len(pack.quiz) < quiz or len(pack.test) < test:
+        return True
+    if len(transcript.split()) >= 800 and any(len(topic.summary.split()) < 70 for topic in pack.topics):
+        return True
+    return False
+
+
+async def _expand_study_pack(request: LearningRequest, draft: StudyAnalysis) -> StudyAnalysis:
+    schema = StudyAnalysis.model_json_schema()
+    flashcards, quiz, test = _study_targets(request.transcript)
+    prompt = f"""Audit and expand this draft study pack into a complete self-contained course based ONLY on the source transcript.
+
+The learner's requirement is strict: they should be able to learn the material from the generated pack without going back to the video or transcript for ordinary study.
 
 Rules:
-- Stay grounded in the source transcript. Do not invent course facts.
+- Preserve useful content and stable IDs from the draft whenever possible.
+- Stay grounded in the transcript. Do not add outside facts merely to hit a count.
+- Every substantive transcript concept needs a topic.
+- Each topic's `summary` is the actual LESSON, not a teaser. Teach definitions, reasoning, relationships, syntax, process, edge cases, and context that the transcript explains. For a normal topic, write several useful paragraphs or an equivalently detailed explanation. Use line breaks when it improves readability.
+- `keyPoints` should capture the rules and facts the learner must remember.
+- `examples` should contain concrete worked examples, code, commands, scenarios, or applications when the transcript supports them.
+- `commonMistakes` should explain likely misunderstandings and why they are wrong.
+- `prerequisites` should identify earlier topics that should be understood first.
+- Flashcards must cover the important definitions, distinctions, rules, syntax, edge cases, and common mistakes. Target AT LEAST {flashcards} useful cards when the transcript supports that much material.
+- Quiz must be a real checkpoint after learning. Target AT LEAST {quiz} questions with broad topic coverage.
+- Test must be a real final assessment, harder and broader than the quiz. Target AT LEAST {test} questions, mixing recall, explanation, application, edge cases, and code/reasoning where appropriate.
+- Do not make the test a single-question self-check.
+- Practice tasks come AFTER learning and assessment. They should be hands-on exercises that prove the learner can apply the material. They are not substitutes for teaching notes.
+- Every question needs a correct answer and a teaching explanation.
+- Multiple-choice questions need plausible distractors and one best answer. Other question types use an empty choices list.
+- Keep question type to exactly one of: multiple_choice, short_answer, explain, code.
+- reviewScheduleDays should normally be [1,3,7,14,30].
+- Return only JSON matching this schema: {json.dumps(schema, ensure_ascii=False)}
+
+Requested title: {request.title}
+Context supplied by learner: {request.context}
+
+DRAFT PACK:
+{draft.model_dump_json(indent=2)}
+
+SOURCE TRANSCRIPT:
+{request.transcript}
+"""
+    return await _structured(prompt, StudyAnalysis)
+
+
+async def create_study_pack(request: LearningRequest) -> StudyAnalysis:
+    schema = StudyAnalysis.model_json_schema()
+    flashcards, quiz, test = _study_targets(request.transcript)
+    prompt = f"""Build a complete self-contained course from this lecture/course transcript.
+
+The learner wants to study from THIS generated pack instead of rewatching the source. This is not a summary task. Teach the material first, then create active recall and assessment.
+
+Rules:
+- Stay grounded in the source transcript. Do not invent course facts or silently add outside knowledge.
 - Correct obvious speech-to-text noise only when the intended meaning is clear.
 - Create a useful nested topic hierarchy. `suggestedPath` should be a short library path such as ["Java", "Classes", "Inheritance"].
 - Topics must use stable short IDs and parentId to express hierarchy. Root topics use parentId=null.
-- Each topic needs a concise explanation, key points, examples when supported, prerequisites, and common mistakes.
-- Learning objectives must describe things the learner should be able to DO or EXPLAIN, not vague reading goals.
-- Flashcards should test atomic facts, distinctions, syntax, rules, or concepts.
-- Quiz questions should give quick active-recall coverage.
-- The test must be harder than the quiz and cover explanation, application, edge cases, and code questions when the subject involves programming.
+- Each topic's `summary` must function as a detailed lesson the learner can study directly. Explain what the concept is, how it works, why it matters in the transcript, important distinctions, relationships to nearby concepts, and edge cases the transcript covers. Do not use one-sentence summaries for substantive topics.
+- Put memorable rules and facts in `keyPoints`.
+- Put concrete examples, code, commands, scenarios, or worked applications in `examples` whenever supported by the transcript.
+- Put likely misconceptions and their correction in `commonMistakes`.
+- Learning objectives must describe things the learner should be able to DO or EXPLAIN after studying.
+- Flashcards are mandatory when the transcript contains studyable facts. Target AT LEAST {flashcards} useful cards when supported, distributed across the substantive topics.
+- Quiz is mandatory when there is enough material. Target AT LEAST {quiz} questions and use it as a broad comprehension checkpoint after learning.
+- Test is mandatory when there is enough material. Target AT LEAST {test} questions and make it clearly harder than the quiz, covering explanation, application, edge cases, and code/reasoning when appropriate.
+- Never collapse a normal lesson into one quiz/test question.
 - Multiple-choice questions must have plausible distractors and exactly one best answer.
 - For short-answer/explain/code questions, choices must be an empty list.
 - Every question needs the correct answer and a teaching explanation.
-- Practice tasks must require observable work and include explicit success criteria.
+- Practice tasks happen after learning. They must require observable work and include explicit success criteria. Do not use tasks as a replacement for the teaching material.
 - Include enough material to cover every substantive topic in the transcript without bloating trivial points.
-- Prefer 10-25 flashcards for a normal lesson, 8-15 quiz questions, and 8-15 test questions. Scale up only when the transcript genuinely contains many topics.
-- reviewScheduleDays should default to a sensible spaced-repetition sequence such as [1,3,7,14,30].
+- reviewScheduleDays should normally be [1,3,7,14,30].
 - Output only JSON matching this schema: {json.dumps(schema, ensure_ascii=False)}
 
 Requested title: {request.title}
@@ -62,7 +127,10 @@ Context supplied by learner: {request.context}
 SOURCE TRANSCRIPT:
 {request.transcript}
 """
-    return await _structured(prompt, StudyAnalysis)
+    pack = await _structured(prompt, StudyAnalysis)
+    if _study_needs_expansion(pack, request.transcript):
+        pack = await _expand_study_pack(request, pack)
+    return pack
 
 
 async def create_social_audit(request: LearningRequest) -> SocialAuditAnalysis:
