@@ -1,8 +1,8 @@
-import { BookOpen, BrainCircuit, CheckCircle2, ExternalLink, FileText, FolderTree, Search, Sparkles, UploadCloud, Video, Youtube } from 'lucide-react';
+import { BookOpen, BrainCircuit, CheckCircle2, ExternalLink, FileText, FolderTree, RefreshCw, Search, Sparkles, UploadCloud, Video, Youtube } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Card, Field } from '../components/ui';
 import { db } from '../data/db';
-import type { StudyAnalysis, StudyEntry } from '../domain/learning';
+import type { StudyAnalysis, StudyEntry, StudyQuestion } from '../domain/learning';
 import type { LanguageMode } from '../domain/types';
 import { createId } from '../lib/id';
 import { analyzeStudyWithOllama, buildStudyChatGptPrompt, copyAndOpenChatGpt, importYouTubeTranscript, parseStudyChatGptResult, repairStudyChatGptResult } from '../services/learning';
@@ -10,7 +10,7 @@ import { transcribeWithWorker } from '../services/worker';
 import { useAppStore } from '../state/AppStore';
 
 type SourceMode = 'existing' | 'upload' | 'youtube' | 'text';
-type StudyTab = 'notes' | 'tasks' | 'flashcards' | 'quiz' | 'test' | 'chatgpt';
+type StudyTab = 'learn' | 'flashcards' | 'quiz' | 'test' | 'tasks' | 'review' | 'chatgpt';
 
 function parsePath(value: string): string[] {
   return value.split(/[>/\\]+/).map((part) => part.trim()).filter(Boolean);
@@ -38,6 +38,12 @@ function masteryPercent(entry: StudyEntry): number {
   return Math.min(100, Math.round((done / total) * 100));
 }
 
+function scoreLabel(entry: StudyEntry, questions: StudyQuestion[]): string {
+  if (!questions.length) return '0 / 0';
+  const correct = questions.filter((question) => entry.questionResults[question.id] === 'correct').length;
+  return `${correct} / ${questions.length}`;
+}
+
 export function StudyLibraryPage() {
   const { settings, transcriptions, tSegments, workerReady, showToast } = useAppStore();
   const [entries, setEntries] = useState<StudyEntry[]>([]);
@@ -56,7 +62,8 @@ export function StudyLibraryPage() {
   const [progress, setProgress] = useState(0);
   const [stage, setStage] = useState('');
   const [error, setError] = useState<string>();
-  const [tab, setTab] = useState<StudyTab>('notes');
+  const [tab, setTab] = useState<StudyTab>('learn');
+  const [revealedQuestionIds, setRevealedQuestionIds] = useState<string[]>([]);
   const [chatImportOpen, setChatImportOpen] = useState(false);
   const [chatResult, setChatResult] = useState('');
   const [chatImportError, setChatImportError] = useState<string>();
@@ -72,6 +79,11 @@ export function StudyLibraryPage() {
 
   const readyTranscripts = transcriptions.filter((item) => item.status === 'ready');
   const selected = entries.find((entry) => entry.id === selectedId);
+  const reviewQuestions = selected
+    ? [...selected.analysis.quiz, ...selected.analysis.test].filter((question) => selected.questionResults[question.id] === 'incorrect')
+    : [];
+  const reviewTopicIds = new Set(reviewQuestions.map((question) => question.topicId));
+  const reviewTopics = selected ? selected.analysis.topics.filter((topic) => reviewTopicIds.has(topic.id)) : [];
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     if (!needle) return entries;
@@ -107,12 +119,12 @@ export function StudyLibraryPage() {
         transcript = segments.map((segment) => `${segment.speakerLabel}: ${segment.text}`).join('\n');
         sourceName = `TranscribeChats · ${source.title}`;
         resolvedTitle ||= source.title;
-        setProgress(70); setStage('Building study pack with Ollama');
+        setProgress(70); setStage('Building full course with Ollama');
       } else if (sourceMode === 'text') {
         if (!text.trim()) throw new Error('Paste study material first.');
         transcript = text.trim();
         resolvedTitle ||= 'Study notes';
-        setProgress(70); setStage('Building study pack with Ollama');
+        setProgress(70); setStage('Building full course with Ollama');
       } else if (sourceMode === 'youtube') {
         if (!youtubeUrl.trim()) throw new Error('Paste a YouTube link first.');
         if (workerReady === false) throw new Error('The local transcription worker is not available. Start it before importing YouTube.');
@@ -126,7 +138,7 @@ export function StudyLibraryPage() {
         sourceName = result.sourceName;
         resolvedTitle ||= result.title;
         setProgress(70);
-        setStage(result.method === 'captions' ? 'YouTube captions loaded · building study pack with Ollama' : 'YouTube audio transcribed with Whisper · building study pack with Ollama');
+        setStage(result.method === 'captions' ? 'YouTube captions loaded · building full course' : 'YouTube audio transcribed with Whisper · building full course');
       } else {
         if (!file) throw new Error('Choose a video or audio file first.');
         if (workerReady === false) throw new Error('The local transcription worker is not available. Start it before importing media.');
@@ -140,7 +152,7 @@ export function StudyLibraryPage() {
           false
         );
         transcript = result.segments.map((segment) => `${segment.speakerLabel}: ${segment.text}`).join('\n');
-        setProgress(70); setStage('Building study pack with Ollama');
+        setProgress(70); setStage('Building full course with Ollama');
       }
 
       const analysis = await analyzeStudyWithOllama(settings.workerUrl, { title: resolvedTitle, transcript, context });
@@ -162,11 +174,12 @@ export function StudyLibraryPage() {
       await db.studyEntries.add(entry);
       await reload();
       setSelectedId(entry.id);
+      setTab('learn');
       setProgress(100); setStage('Ready');
-      showToast('Study pack created and indexed locally.');
+      showToast('Full learning course created and indexed locally.');
       setFile(undefined); setYoutubeUrl(''); setText(''); setTitle(''); setPathText('');
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not create the study pack.');
+      setError(reason instanceof Error ? reason.message : 'Could not create the study course.');
     } finally {
       setBusy(false);
     }
@@ -198,6 +211,47 @@ export function StudyLibraryPage() {
   const markQuestion = async (questionId: string, result: 'correct' | 'incorrect') => {
     if (!selected) return;
     await patchSelected({ questionResults: { ...selected.questionResults, [questionId]: result } });
+    if (result === 'incorrect') showToast('Added to Review. The related lesson and question are waiting there.');
+    else showToast('Marked as understood.');
+  };
+
+  const revealQuestion = (questionId: string) => {
+    setRevealedQuestionIds((current) => current.includes(questionId) ? current : [...current, questionId]);
+  };
+
+  const rebuildFullCourse = async () => {
+    if (!selected || busy) return;
+    setBusy(true); setError(undefined); setProgress(65); setStage('Rebuilding a complete course from the saved transcript');
+    try {
+      const analysis = await analyzeStudyWithOllama(settings.workerUrl, {
+        title: selected.title,
+        transcript: selected.transcript,
+        context: 'Rebuild this as a self-contained course that can be learned without returning to the source video. Preserve source grounding and provide complete learning, flashcards, quiz, test, and practice.'
+      });
+      const validTopics = new Set(analysis.topics.map((item) => item.id));
+      const validTasks = new Set(analysis.tasks.map((item) => item.id));
+      const validQuestions = new Set([...analysis.quiz, ...analysis.test].map((item) => item.id));
+      const preservedQuestionResults = Object.fromEntries(
+        Object.entries(selected.questionResults).filter(([id]) => validQuestions.has(id))
+      ) as Record<string, 'correct' | 'incorrect'>;
+      await db.studyEntries.update(selected.id, {
+        title: analysis.title || selected.title,
+        analysis,
+        masteredTopicIds: selected.masteredTopicIds.filter((id) => validTopics.has(id)),
+        completedTaskIds: selected.completedTaskIds.filter((id) => validTasks.has(id)),
+        questionResults: preservedQuestionResults,
+        updatedAt: new Date().toISOString()
+      });
+      await reload();
+      setRevealedQuestionIds([]);
+      setTab('learn');
+      setProgress(100); setStage('Ready');
+      showToast('Rebuilt as a complete learning course from the saved transcript.');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not rebuild the full course.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const improveWithChatGpt = async () => {
@@ -269,10 +323,11 @@ export function StudyLibraryPage() {
       await reload();
       setChatResult('');
       setChatImportOpen(false);
-      setTab('notes');
+      setRevealedQuestionIds([]);
+      setTab('learn');
       showToast(repairedLocally
-        ? 'ChatGPT response repaired locally and applied to the study pack.'
-        : 'ChatGPT study pass applied to the structured study pack.');
+        ? 'ChatGPT response repaired locally and applied to the study course.'
+        : 'ChatGPT study pass applied to the structured study course.');
     } catch (reason) {
       await reload();
       setChatImportOpen(false);
@@ -307,9 +362,28 @@ export function StudyLibraryPage() {
     showToast('Study entry deleted.');
   };
 
+  const renderQuestions = (questions: StudyQuestion[], mode: 'quiz' | 'test') => {
+    if (!selected) return null;
+    if (!questions.length) return <Card><h3>No {mode} questions were generated</h3><p>This pack is incomplete. Use <strong>Rebuild full course</strong> above to regenerate it from the saved transcript with the new completeness rules.</p></Card>;
+    return <div className="question-list">
+      <Card><h3>{mode === 'quiz' ? 'Knowledge checkpoint' : 'Final test'}</h3><p>{mode === 'quiz' ? 'Do this after Learn and Flashcards. Answer before revealing the solution.' : 'Treat this like a real exam. Work through the full test without looking at the Learn tab, then reveal and grade each answer.'}</p><strong>Score: {scoreLabel(selected, questions)}</strong></Card>
+      {questions.map((question, index) => {
+        const result = selected.questionResults[question.id];
+        const revealed = revealedQuestionIds.includes(question.id);
+        return <Card key={question.id} className={`question-card ${result ? `result-${result}` : ''}`}>
+          <div className="study-card-status"><small>Question {index + 1} · {question.difficulty} · {question.topicId}</small>{result && <strong>{result === 'correct' ? 'Understood' : 'Needs review'}</strong>}</div>
+          <h3>{question.prompt}</h3>
+          {question.choices.length > 0 && <ol>{question.choices.map((choice) => <li key={choice}>{choice}</li>)}</ol>}
+          {!revealed && <Button variant="secondary" onClick={() => revealQuestion(question.id)}>Show answer</Button>}
+          {revealed && <div className="answer-block"><strong>Answer</strong><p style={{ whiteSpace: 'pre-line' }}>{question.answer}</p><strong>Why</strong><p style={{ whiteSpace: 'pre-line' }}>{question.explanation}</p><div className="self-grade"><button onClick={() => void markQuestion(question.id, 'correct')}>I got it</button><button onClick={() => void markQuestion(question.id, 'incorrect')}>Needs review</button></div></div>}
+        </Card>;
+      })}
+    </div>;
+  };
+
   return <div className="page learning-page">
     <header className="page-header learning-header">
-      <div><span className="eyebrow">Learning system</span><h1>Study Library</h1><p>Turn lectures, courses, YouTube videos, transcripts and notes into a structured library you can actually learn from.</p></div>
+      <div><span className="eyebrow">Learning system</span><h1>Study Library</h1><p>Turn lectures, courses, YouTube videos, transcripts and notes into complete self-contained courses you can learn from directly.</p></div>
       <div className="learning-kpi"><BrainCircuit /><strong>{entries.length}</strong><span>study packs</span></div>
     </header>
 
@@ -317,7 +391,7 @@ export function StudyLibraryPage() {
       <aside className="learning-library">
         <div className="learning-search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search Java, classes, inheritance…" /></div>
         <div className="library-list">
-          {filtered.map((entry) => <button key={entry.id} className={`library-entry ${entry.id === selectedId ? 'active' : ''}`} onClick={() => setSelectedId(entry.id)}>
+          {filtered.map((entry) => <button key={entry.id} className={`library-entry ${entry.id === selectedId ? 'active' : ''}`} onClick={() => { setSelectedId(entry.id); setTab('learn'); }}>
             <FolderTree size={18} /><span><small>{entry.path.join(' / ') || 'Unsorted'} · {masteryPercent(entry)}%</small><strong>{entry.title}</strong></span>
           </button>)}
           {!filtered.length && <p className="empty-copy">No study packs match this search.</p>}
@@ -326,7 +400,7 @@ export function StudyLibraryPage() {
 
       <section className="learning-main">
         <Card className="learning-create-card">
-          <div className="learning-card-title"><Sparkles /><div><strong>Create a study pack</strong><span>Ollama runs locally. Use an existing transcript, upload video/audio, paste a YouTube link, or paste notes.</span></div></div>
+          <div className="learning-card-title"><Sparkles /><div><strong>Create a full learning course</strong><span>Ollama runs locally. The result teaches the transcript first, then builds flashcards, a quiz, a full test, practice, and review.</span></div></div>
           <div className="learning-source-tabs">
             <button className={sourceMode === 'existing' ? 'active' : ''} onClick={() => setSourceMode('existing')}><BookOpen size={16} />Existing transcript</button>
             <button className={sourceMode === 'upload' ? 'active' : ''} onClick={() => setSourceMode('upload')}><Video size={16} />Video / audio</button>
@@ -347,31 +421,53 @@ export function StudyLibraryPage() {
           <Field label="Context" hint="Optional: course name, lecturer terms, what you are trying to master."><input value={context} onChange={(event) => setContext(event.target.value)} placeholder="Course: Java fundamentals · Focus: OOP and exam preparation" /></Field>
           {(busy || progress > 0) && <div className="learning-progress"><div><span>{stage}</span><strong>{progress}%</strong></div><progress max="100" value={progress} /></div>}
           {error && <div className="banner banner-error">{error}</div>}
-          <div className="form-actions"><Button busy={busy} onClick={() => void createStudyPack()}><UploadCloud size={17} />{sourceMode === 'upload' ? 'Transcribe video/audio + build study pack' : sourceMode === 'youtube' ? 'Import YouTube + build study pack' : 'Build learning pack'}</Button></div>
+          <div className="form-actions"><Button busy={busy} onClick={() => void createStudyPack()}><UploadCloud size={17} />{sourceMode === 'upload' ? 'Transcribe + build full course' : sourceMode === 'youtube' ? 'Import YouTube + build full course' : 'Build full course'}</Button></div>
         </Card>
 
         {selected ? <div className="learning-result">
-          <div className="learning-result-head"><div><small>{selected.path.join(' / ') || 'Unsorted'}{selected.chatGptRefinedAt ? ' · ChatGPT refined' : ''}</small><h2>{selected.title}</h2><p>{selected.analysis.overview}</p><div className="mastery-summary"><span><strong>{masteryPercent(selected)}%</strong> mastered</span><progress max="100" value={masteryPercent(selected)} /></div></div><div className="learning-result-actions"><Button variant="secondary" onClick={() => void improveWithChatGpt()}><ExternalLink size={16} />Second pass with ChatGPT</Button><Button variant="secondary" onClick={() => { setChatImportOpen(true); setChatImportError(undefined); setChatImportStage(''); }}>Paste ChatGPT result</Button><Button variant="ghost" onClick={() => void removeSelected()}>Delete</Button></div></div>
+          <div className="learning-result-head"><div><small>{selected.path.join(' / ') || 'Unsorted'}{selected.chatGptRefinedAt ? ' · ChatGPT refined' : ''}</small><h2>{selected.title}</h2><p>{selected.analysis.overview}</p><div className="mastery-summary"><span><strong>{masteryPercent(selected)}%</strong> mastered</span><progress max="100" value={masteryPercent(selected)} /></div></div><div className="learning-result-actions"><Button variant="secondary" busy={busy} onClick={() => void rebuildFullCourse()}><RefreshCw size={16} />Rebuild full course</Button><Button variant="secondary" onClick={() => void improveWithChatGpt()}><ExternalLink size={16} />Second pass with ChatGPT</Button><Button variant="secondary" onClick={() => { setChatImportOpen(true); setChatImportError(undefined); setChatImportStage(''); }}>Paste ChatGPT result</Button><Button variant="ghost" onClick={() => void removeSelected()}>Delete</Button></div></div>
 
           {chatImportOpen && <Card className="chatgpt-import-card">
-            <div className="learning-card-title"><Sparkles /><div><strong>Bring the ChatGPT second pass back into this study pack</strong><span>Paste the full response. If its formatting is messy, the local Ollama worker repairs it into the exact study structure automatically, while the original ChatGPT response is always saved.</span></div></div>
+            <div className="learning-card-title"><Sparkles /><div><strong>Bring the ChatGPT second pass back into this study course</strong><span>Paste the full response. If its formatting is messy, the local Ollama worker repairs it into the exact study structure automatically, while the original ChatGPT response is always saved.</span></div></div>
             <textarea className="learning-textarea" value={chatResult} disabled={chatImportBusy} onChange={(event) => { setChatResult(event.target.value); setChatImportError(undefined); }} placeholder="Paste the full ChatGPT response here…" />
             {chatImportBusy && <div className="learning-progress"><div><span>{chatImportStage}</span><strong>Working…</strong></div><progress /></div>}
             {chatImportError && <div className="banner banner-error">{chatImportError}</div>}
             <div className="form-actions"><Button variant="ghost" disabled={chatImportBusy} onClick={() => { setChatImportOpen(false); setChatImportError(undefined); setChatImportStage(''); }}>Cancel</Button><Button variant="secondary" busy={chatImportBusy} onClick={() => void pasteAndApplyChatGptFromClipboard()}>Paste + apply from clipboard</Button><Button busy={chatImportBusy} onClick={() => void applyChatGptResult()}>Apply pasted response</Button></div>
           </Card>}
 
-          <div className="learning-tabs">{(['notes','tasks','flashcards','quiz','test'] as StudyTab[]).map((value) => <button key={value} className={tab === value ? 'active' : ''} onClick={() => setTab(value)}>{value}</button>)}{selected.chatGptOutput && <button className={tab === 'chatgpt' ? 'active' : ''} onClick={() => setTab('chatgpt')}>ChatGPT</button>}</div>
+          <div className="learning-tabs">
+            <button className={tab === 'learn' ? 'active' : ''} onClick={() => setTab('learn')}>Learn</button>
+            <button className={tab === 'flashcards' ? 'active' : ''} onClick={() => setTab('flashcards')}>Flashcards ({selected.analysis.flashcards.length})</button>
+            <button className={tab === 'quiz' ? 'active' : ''} onClick={() => setTab('quiz')}>Quiz ({selected.analysis.quiz.length})</button>
+            <button className={tab === 'test' ? 'active' : ''} onClick={() => setTab('test')}>Test ({selected.analysis.test.length})</button>
+            <button className={tab === 'tasks' ? 'active' : ''} onClick={() => setTab('tasks')}>Practice ({selected.analysis.tasks.length})</button>
+            <button className={tab === 'review' ? 'active' : ''} onClick={() => setTab('review')}>Review ({reviewQuestions.length})</button>
+            {selected.chatGptOutput && <button className={tab === 'chatgpt' ? 'active' : ''} onClick={() => setTab('chatgpt')}>ChatGPT</button>}
+          </div>
 
-          {tab === 'notes' && <div className="learning-content-grid">
+          {tab === 'learn' && <div className="learning-content-grid">
+            <Card><h3>How to use this course</h3><p>Start here and learn the material in order. The notes are meant to replace ordinary rewatching of the source. After you understand the lessons, move to Flashcards, then Quiz, then the full Test. Practice is for applying what you already learned.</p></Card>
             <Card><h3>Learning objectives</h3><ul>{selected.analysis.learningObjectives.map((item, index) => <li key={index}>{item}</li>)}</ul></Card>
-            {selected.analysis.topics.map((topic) => { const learned = selected.masteredTopicIds.includes(topic.id); return <Card key={topic.id} className={`topic-card ${learned ? 'is-mastered' : ''}`}><div className="study-card-status"><small>{topic.parentId ? `Under ${topic.parentId}` : 'Core topic'}</small><button onClick={() => void toggleTopic(topic.id)}>{learned ? <CheckCircle2 size={15} /> : null}{learned ? 'Learned' : 'Mark learned'}</button></div><h3>{topic.title}</h3><p>{topic.summary}</p><h4>Key points</h4><ul>{topic.keyPoints.map((item, index) => <li key={index}>{item}</li>)}</ul>{topic.commonMistakes.length > 0 && <><h4>Common mistakes</h4><ul>{topic.commonMistakes.map((item, index) => <li key={index}>{item}</li>)}</ul></>}</Card>; })}
+            {selected.analysis.topics.map((topic) => { const learned = selected.masteredTopicIds.includes(topic.id); return <Card key={topic.id} className={`topic-card ${learned ? 'is-mastered' : ''}`}><div className="study-card-status"><small>{topic.parentId ? `Under ${topic.parentId}` : 'Core topic'}</small><button onClick={() => void toggleTopic(topic.id)}>{learned ? <CheckCircle2 size={15} /> : null}{learned ? 'Learned' : 'Mark learned'}</button></div><h3>{topic.title}</h3><p style={{ whiteSpace: 'pre-line' }}>{topic.summary}</p>{topic.prerequisites.length > 0 && <><h4>Learn first</h4><ul>{topic.prerequisites.map((item, index) => <li key={index}>{item}</li>)}</ul></>}<h4>Key points</h4><ul>{topic.keyPoints.map((item, index) => <li key={index}>{item}</li>)}</ul>{topic.examples.length > 0 && <><h4>Examples</h4><ul>{topic.examples.map((item, index) => <li key={index}><span style={{ whiteSpace: 'pre-line' }}>{item}</span></li>)}</ul></>}{topic.commonMistakes.length > 0 && <><h4>Common mistakes</h4><ul>{topic.commonMistakes.map((item, index) => <li key={index}>{item}</li>)}</ul></>}</Card>; })}
           </div>}
-          {tab === 'tasks' && <div className="learning-content-grid">{selected.analysis.tasks.map((task) => { const done = selected.completedTaskIds.includes(task.id); return <Card key={task.id} className={done ? 'is-mastered' : ''}><div className="study-card-status"><small>{task.difficulty} · {task.topicId}</small><button onClick={() => void toggleTask(task.id)}>{done ? <CheckCircle2 size={15} /> : null}{done ? 'Completed' : 'Mark completed'}</button></div><h3>{task.title}</h3><p>{task.instruction}</p><strong>Done when:</strong><p>{task.successCriteria}</p></Card>; })}</div>}
-          {tab === 'flashcards' && <div className="flashcard-grid">{selected.analysis.flashcards.map((card) => <details key={card.id} className="flashcard"><summary><small>{card.difficulty}</small><strong>{card.front}</strong><span>Reveal answer</span></summary><p>{card.back}</p></details>)}</div>}
-          {(tab === 'quiz' || tab === 'test') && <div className="question-list">{selected.analysis[tab].map((question, index) => { const result = selected.questionResults[question.id]; return <details key={question.id} className={`question-card ${result ? `result-${result}` : ''}`}><summary><span>{index + 1}</span><strong>{question.prompt}</strong><small>{result ? `${result} · ${question.difficulty}` : question.difficulty}</small></summary>{question.choices.length > 0 && <ol>{question.choices.map((choice) => <li key={choice}>{choice}</li>)}</ol>}<div className="answer-block"><strong>Answer</strong><p>{question.answer}</p><strong>Why</strong><p>{question.explanation}</p><div className="self-grade"><button onClick={() => void markQuestion(question.id, 'correct')}>I got it</button><button onClick={() => void markQuestion(question.id, 'incorrect')}>Needs review</button></div></div></details>; })}</div>}
+
+          {tab === 'flashcards' && (selected.analysis.flashcards.length > 0 ? <><Card><h3>Flashcards</h3><p>Use these after reading Learn. Try to answer before opening each card.</p></Card><div className="flashcard-grid">{selected.analysis.flashcards.map((card) => <details key={card.id} className="flashcard"><summary><small>{card.difficulty} · {card.topicId}</small><strong>{card.front}</strong><span>Reveal answer</span></summary><p>{card.back}</p></details>)}</div></> : <Card><h3>No flashcards were generated</h3><p>This pack is incomplete. Use <strong>Rebuild full course</strong> above to regenerate it from the saved transcript.</p></Card>)}
+
+          {tab === 'quiz' && renderQuestions(selected.analysis.quiz, 'quiz')}
+          {tab === 'test' && renderQuestions(selected.analysis.test, 'test')}
+
+          {tab === 'tasks' && <div className="learning-content-grid"><Card><h3>Practice after learning</h3><p>These are application exercises, not the lesson itself. Finish Learn first, then use Practice to prove you can actually use the material.</p></Card>{selected.analysis.tasks.length > 0 ? selected.analysis.tasks.map((task) => { const done = selected.completedTaskIds.includes(task.id); return <Card key={task.id} className={done ? 'is-mastered' : ''}><div className="study-card-status"><small>{task.difficulty} · {task.topicId}</small><button onClick={() => void toggleTask(task.id)}>{done ? <CheckCircle2 size={15} /> : null}{done ? 'Completed' : 'Mark completed'}</button></div><h3>{task.title}</h3><p style={{ whiteSpace: 'pre-line' }}>{task.instruction}</p><strong>Done when:</strong><p style={{ whiteSpace: 'pre-line' }}>{task.successCriteria}</p></Card>; }) : <Card><p>No practice exercises were generated for this pack. Rebuild the full course to regenerate them.</p></Card>}</div>}
+
+          {tab === 'review' && <div className="learning-content-grid">
+            {reviewQuestions.length === 0 ? <Card><h3>Review queue is clear</h3><p>When you mark a quiz or test question as <strong>Needs review</strong>, its lesson and question appear here automatically. Mark it understood later and it disappears from this queue.</p></Card> : <>
+              <Card><h3>{reviewQuestions.length} item{reviewQuestions.length === 1 ? '' : 's'} need review</h3><p>Relearn the related lesson below, then retry the questions. This queue is driven by your quiz and test results.</p></Card>
+              {reviewTopics.map((topic) => <Card key={topic.id}><h3>Relearn: {topic.title}</h3><p style={{ whiteSpace: 'pre-line' }}>{topic.summary}</p><h4>Key points</h4><ul>{topic.keyPoints.map((item, index) => <li key={index}>{item}</li>)}</ul>{topic.examples.length > 0 && <><h4>Examples</h4><ul>{topic.examples.map((item, index) => <li key={index}>{item}</li>)}</ul></>}</Card>)}
+              {reviewQuestions.map((question) => <Card key={question.id} className="question-card result-incorrect"><small>{question.topicId} · {question.difficulty}</small><h3>{question.prompt}</h3><div className="answer-block"><strong>Correct answer</strong><p style={{ whiteSpace: 'pre-line' }}>{question.answer}</p><strong>Explanation</strong><p style={{ whiteSpace: 'pre-line' }}>{question.explanation}</p><Button onClick={() => void markQuestion(question.id, 'correct')}>I know this now</Button></div></Card>)}
+            </>}
+          </div>}
+
           {tab === 'chatgpt' && <Card><h3>ChatGPT second pass</h3><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontFamily: 'inherit', lineHeight: 1.6, margin: 0 }}>{selected.chatGptOutput || 'No ChatGPT response has been saved for this study pack yet.'}</pre></Card>}
-        </div> : <Card className="learning-empty"><BrainCircuit size={42} /><h2>Your course library starts here</h2><p>Create the first pack above. It will be indexed by subject and topic, with notes, tasks, flashcards, quizzes and tests together.</p></Card>}
+        </div> : <Card className="learning-empty"><BrainCircuit size={42} /><h2>Your course library starts here</h2><p>Create the first course above. It will teach the material first, then give you flashcards, a quiz, a full test, practice exercises, and a review queue.</p></Card>}
       </section>
     </div>
   </div>;
