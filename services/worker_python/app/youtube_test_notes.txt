@@ -1,0 +1,12 @@
+YouTube study importer verification cases
+
+Manual smoke checks after START-LEARNING.cmd rebuilds the worker:
+1. Public YouTube video with English manual captions -> method should be captions.
+2. Public YouTube video with only automatic captions -> method should be captions.
+3. Public YouTube video without usable captions -> method should be whisper after audio-only download.
+4. Hebrew video with language set to Hebrew -> prefer he/iw captions, otherwise Whisper Hebrew.
+5. Non-YouTube URL -> reject before yt-dlp.
+6. Playlist/channel URL without a single video -> reject rather than importing many videos.
+7. YouTube Shorts single-video URL -> accepted.
+
+The app stores the resulting transcript locally and sends it through the same Ollama study-pack pipeline as uploaded media.
