@@ -60,7 +60,7 @@ def _pick_language(track_map: dict, language_mode: str) -> str | None:
         for key in keys:
             if key.lower().split("-", 1)[0] == prefix:
                 return key
-    return keys[0]
+    return keys[0] if language_mode == "auto" else None
 
 
 def _pick_caption_track(info: dict, language_mode: str) -> tuple[str, dict] | None:
@@ -159,7 +159,7 @@ def _download_audio(url: str, target_dir: Path) -> Path:
     }
     with YoutubeDL(options) as ydl:
         info = ydl.extract_info(url, download=True)
-        requested = info.get("requested_downloads") or [] if isinstance(info, dict) else []
+        requested = (info.get("requested_downloads") or []) if isinstance(info, dict) else []
         if requested and requested[0].get("filepath"):
             candidate = Path(requested[0]["filepath"])
             if candidate.exists():
