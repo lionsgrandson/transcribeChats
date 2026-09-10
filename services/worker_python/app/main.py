@@ -19,15 +19,18 @@ from .schemas import (
     StudyAnalysis,
     TranscriptionJobStatus,
     TranscriptionResponse,
+    YouTubeImportRequest,
+    YouTubeImportResponse,
 )
 from .settings import settings
+from .youtube import import_youtube_transcript
 
 SUPPORTED_EXTENSIONS = {".mp3", ".m4a", ".mp4", ".mov", ".wav", ".webm", ".mpeg", ".mpga", ".ogg", ".flac"}
 logger = logging.getLogger("transcribe-chats.worker")
 jobs: dict[str, TranscriptionJobStatus] = {}
 job_semaphore = asyncio.Semaphore(1)
 
-app = FastAPI(title="TranscribeChats Worker", version="0.7.0", docs_url="/docs")
+app = FastAPI(title="TranscribeChats Worker", version="0.8.0", docs_url="/docs")
 app.add_middleware(CORSMiddleware, allow_origins=settings.origins, allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["*"])
 
 
@@ -145,6 +148,19 @@ async def analyze_transcript(request: AnalysisRequest) -> Analysis:
     except Exception as error:
         logger.exception("Ollama analysis failed")
         raise HTTPException(status_code=502, detail=f"Ollama analysis failed: {error}") from error
+
+
+@app.post("/v1/youtube/transcript", response_model=YouTubeImportResponse)
+async def import_youtube(request: YouTubeImportRequest) -> YouTubeImportResponse:
+    try:
+        async with job_semaphore:
+            result = await import_youtube_transcript(request.url, request.language_mode, request.context)
+        return YouTubeImportResponse(**result)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        logger.exception("YouTube import failed")
+        raise HTTPException(status_code=502, detail=f"YouTube import failed: {error}") from error
 
 
 @app.post("/v1/study", response_model=StudyAnalysis)
