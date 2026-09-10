@@ -2,7 +2,7 @@ import json
 
 import httpx
 
-from .schemas import LearningRequest, SocialAuditAnalysis, StudyAnalysis
+from .schemas import ChatGptRepairRequest, LearningRequest, SocialAuditAnalysis, StudyAnalysis
 from .settings import settings
 
 
@@ -96,5 +96,65 @@ Context supplied by learner: {request.context}
 
 SOURCE TRANSCRIPT:
 {request.transcript}
+"""
+    return await _structured(prompt, SocialAuditAnalysis)
+
+
+async def repair_study_chatgpt_output(request: ChatGptRepairRequest) -> StudyAnalysis:
+    schema = StudyAnalysis.model_json_schema()
+    prompt = f"""Convert the pasted ChatGPT study response below into the application's exact StudyAnalysis schema.
+
+This is a STRUCTURAL REPAIR task, not a new study-generation task.
+
+Rules:
+- Preserve the user's useful study content, wording, IDs, topic hierarchy, answers, examples, flashcards, quiz questions, test questions, tasks, and review schedule whenever possible.
+- Repair malformed JSON, Markdown escaping, broken quotes, code formatting, and wrapper text instead of discarding content.
+- Remove Markdown escape backslashes that only exist because the response was copied from rendered chat.
+- Preserve existing IDs exactly whenever they are present and unique.
+- Do not invent new subject-matter claims just to fill fields.
+- Every question type MUST become one of: multiple_choice, short_answer, explain, code.
+- Map variants such as multiple-choice or multiple\\_choice to multiple_choice.
+- Map code_writing, code_reasoning, code_review, coding, implementation, or similar programming tasks to code.
+- Map scenario, reasoning, analysis, discussion, or explanation-style questions to explain unless short_answer is clearly more appropriate.
+- Non-multiple-choice questions must use an empty choices array.
+- If a task contains `instructions` as an array, combine those steps into one readable `instruction` string without losing steps.
+- If a task contains `successCriteria` as an array, combine the criteria into one readable `successCriteria` string without losing criteria.
+- Keep difficulty limited to easy, medium, or hard. Use medium only when the source does not make the level clear.
+- Ensure all required strings exist and all required arrays are arrays.
+- Keep reviewScheduleDays as positive integers.
+- Return only JSON matching this schema: {json.dumps(schema, ensure_ascii=False)}
+
+Fallback title if the response has none: {request.title}
+
+PASTED CHATGPT RESPONSE:
+{request.response}
+"""
+    return await _structured(prompt, StudyAnalysis)
+
+
+async def repair_audit_chatgpt_output(request: ChatGptRepairRequest) -> SocialAuditAnalysis:
+    schema = SocialAuditAnalysis.model_json_schema()
+    prompt = f"""Convert the pasted ChatGPT conversation-audit response below into the application's exact SocialAuditAnalysis schema.
+
+This is a STRUCTURAL REPAIR task, not a new psychological or conversational analysis.
+
+Rules:
+- Preserve the useful observations and wording from the pasted response whenever possible.
+- Repair malformed JSON, Markdown escaping, wrapper prose, missing field names, and array-vs-string mistakes instead of discarding content.
+- Do not diagnose anyone and do not add claims about hidden intent.
+- emotional, logical, social, habitsAndPatterns, and possibleBlindSpots must contain observation objects with title, evidence, interpretation, alternatives, and confidence.
+- Turn a single evidence string into a one-item array. Do the same for alternatives.
+- If an observation title is missing, derive a short neutral title from its interpretation without adding a new claim.
+- Confidence must be numeric from 0 to 1. Convert percentages and high/medium/low wording when necessary.
+- strengths, lessons, reflectionQuestions, and uncertaintyNotes must be arrays of strings.
+- socialNormsWorthLearning items must contain norm, whyItMatters, and example.
+- experiments items must contain title, action, and whatToNotice.
+- Do not omit useful sections merely because the pasted structure used different field names.
+- Return only JSON matching this schema: {json.dumps(schema, ensure_ascii=False)}
+
+Fallback title if the response has none: {request.title}
+
+PASTED CHATGPT RESPONSE:
+{request.response}
 """
     return await _structured(prompt, SocialAuditAnalysis)
