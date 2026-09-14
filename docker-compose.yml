@@ -3,7 +3,7 @@ services:
     build:
       context: ./services/worker_python
       args:
-        INSTALL_DIARIZATION: ${INSTALL_DIARIZATION:-false}
+        INSTALL_DIARIZATION: ${INSTALL_DIARIZATION:-true}
     ports:
       - "8787:8787"
     gpus: all
@@ -16,9 +16,10 @@ services:
       ASR_VAD_MIN_SILENCE_MS: ${ASR_VAD_MIN_SILENCE_MS:-500}
       ASR_SPEECH_PAD_MS: ${ASR_SPEECH_PAD_MS:-250}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-2147483648}
-      ENABLE_DIARIZATION: ${ENABLE_DIARIZATION:-false}
+      ENABLE_DIARIZATION: ${ENABLE_DIARIZATION:-true}
       PYANNOTE_TOKEN: ${PYANNOTE_TOKEN:-}
       PYANNOTE_MODEL: ${PYANNOTE_MODEL:-pyannote/speaker-diarization-community-1}
+      PYANNOTE_DEVICE: ${PYANNOTE_DEVICE:-cuda}
       PYANNOTE_METRICS_ENABLED: ${PYANNOTE_METRICS_ENABLED:-false}
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:30b}

@@ -22,6 +22,64 @@ def participant_names(context: str) -> list[str]:
     return names[:MAX_SPEAKERS]
 
 
+def expected_speaker_count(context: str, explicit: int | None = None) -> int | None:
+    if explicit is not None and 1 <= explicit <= MAX_SPEAKERS:
+        return explicit
+    numeric = re.search(r"(?:speaker\s*count|number\s+of\s+speakers|מספר\s+דוברים)\s*[:=]\s*([1-4])\b", context, re.I)
+    if not numeric:
+        numeric = re.search(r"\b([1-4])\s+(?:speakers|participants|דוברים|משתתפים)\b", context, re.I)
+    if numeric:
+        return int(numeric.group(1))
+    names = participant_names(context)
+    return len(names) if len(names) >= 2 else None
+
+
+def explicit_speaker_mapping(context: str) -> dict[str, str]:
+    """Only rename speakers when the user explicitly maps a label to a person."""
+    mapping: dict[str, str] = {}
+    pattern = re.compile(r"(?:speaker|דובר(?:ת)?)\s*([1-4])\s*(?:=|->|→)\s*([^,;\n·]+)", re.I)
+    for match in pattern.finditer(context):
+        name = match.group(2).strip(" -")
+        if name:
+            mapping[f"Speaker {int(match.group(1))}"] = name[:50]
+    return mapping
+
+
+def apply_explicit_speaker_names(segments: list[Segment], context: str) -> None:
+    mapping = explicit_speaker_mapping(context)
+    if not mapping:
+        return
+    for segment in segments:
+        segment.speaker_label = mapping.get(segment.speaker_label, segment.speaker_label)
+
+
+def assign_turns_by_overlap(segments: list[Segment], turns: list[tuple[int, int, str]]) -> bool:
+    """Assign each Whisper segment to the speaker with the greatest time overlap."""
+    if not segments or not turns:
+        return False
+    first_seen: list[str] = []
+    for _, _, speaker in turns:
+        if speaker not in first_seen:
+            first_seen.append(speaker)
+    label_map = {speaker: f"Speaker {index + 1}" for index, speaker in enumerate(first_seen)}
+
+    assigned = 0
+    for segment in segments:
+        overlap_by_speaker: dict[str, int] = {}
+        for start, end, speaker in turns:
+            overlap = max(0, min(segment.end_ms, end) - max(segment.start_ms, start))
+            if overlap:
+                overlap_by_speaker[speaker] = overlap_by_speaker.get(speaker, 0) + overlap
+        if overlap_by_speaker:
+            speaker = max(overlap_by_speaker, key=overlap_by_speaker.get)
+        else:
+            midpoint = (segment.start_ms + segment.end_ms) / 2
+            speaker = min(turns, key=lambda turn: min(abs(midpoint - turn[0]), abs(midpoint - turn[1])))[2]
+        segment.speaker_label = label_map[speaker]
+        assigned += 1
+    return assigned > 0 and len({segment.speaker_label for segment in segments}) > 1
+
+
 def _decode_audio(path: Path) -> np.ndarray:
     process = subprocess.run([
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path),
@@ -68,9 +126,9 @@ def _kmeans(values: np.ndarray, count: int) -> np.ndarray:
         centroids.append(values[int(np.argmax(distances))])
     centers = np.stack(centroids)
     labels = np.zeros(len(values), dtype=int)
-    for _ in range(30):
+    for iteration in range(30):
         next_labels = np.argmin(np.sum((values[:, None, :] - centers[None, :, :]) ** 2, axis=2), axis=1)
-        if np.array_equal(labels, next_labels) and _ > 0:
+        if np.array_equal(labels, next_labels) and iteration > 0:
             break
         labels = next_labels
         for index in range(count):
@@ -94,12 +152,12 @@ def _automatic_speaker_count(values: np.ndarray) -> int:
     return 2 if between > max(1.4, (within + 0.2) * 2.0 * singleton_penalty) else 1
 
 
-def label_segments(segments: list[Segment], embeddings: np.ndarray, context: str) -> bool:
+def label_segments(segments: list[Segment], embeddings: np.ndarray, context: str, speaker_count_hint: int | None = None) -> bool:
     if len(segments) < 2 or len(embeddings) != len(segments):
         return False
-    names = participant_names(context)
     normalized = (embeddings - embeddings.mean(axis=0)) / (embeddings.std(axis=0) + 1e-6)
-    speaker_count = min(len(names), len(segments), MAX_SPEAKERS) if len(names) >= 2 else _automatic_speaker_count(normalized)
+    requested_count = expected_speaker_count(context, speaker_count_hint)
+    speaker_count = min(requested_count, len(segments), MAX_SPEAKERS) if requested_count else _automatic_speaker_count(normalized)
     if speaker_count < 2:
         return False
     labels = _kmeans(normalized, speaker_count)
@@ -108,14 +166,14 @@ def label_segments(segments: list[Segment], embeddings: np.ndarray, context: str
         value = int(label)
         if value not in ordered_clusters:
             ordered_clusters.append(value)
-    display_names = names if len(names) >= len(ordered_clusters) else [f"Speaker {index + 1}" for index in range(len(ordered_clusters))]
-    mapping = {cluster: display_names[index] for index, cluster in enumerate(ordered_clusters)}
+    mapping = {cluster: f"Speaker {index + 1}" for index, cluster in enumerate(ordered_clusters)}
     for segment, label in zip(segments, labels):
         segment.speaker_label = mapping[int(label)]
+    apply_explicit_speaker_names(segments, context)
     return len(set(segment.speaker_label for segment in segments)) > 1
 
 
-def diarize_acoustically(path: Path, segments: list[Segment], context: str) -> bool:
+def diarize_acoustically(path: Path, segments: list[Segment], context: str, speaker_count_hint: int | None = None) -> bool:
     if len(segments) < 2:
         return False
     try:
@@ -125,19 +183,6 @@ def diarize_acoustically(path: Path, segments: list[Segment], context: str) -> b
             start = max(0, round(segment.start_ms * SAMPLE_RATE / 1000))
             end = min(len(audio), round(segment.end_ms * SAMPLE_RATE / 1000))
             embeddings.append(_voice_embedding(audio[start:end]))
-        return label_segments(segments, np.stack(embeddings), context)
+        return label_segments(segments, np.stack(embeddings), context, speaker_count_hint)
     except (OSError, subprocess.SubprocessError, ValueError):
         return False
-
-
-def apply_participant_names(segments: list[Segment], context: str) -> None:
-    names = participant_names(context)
-    labels: list[str] = []
-    for segment in segments:
-        if segment.speaker_label not in labels:
-            labels.append(segment.speaker_label)
-    if len(names) < len(labels):
-        return
-    mapping = {label: names[index] for index, label in enumerate(labels)}
-    for segment in segments:
-        segment.speaker_label = mapping[segment.speaker_label]

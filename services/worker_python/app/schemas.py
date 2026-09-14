@@ -75,6 +75,7 @@ class YouTubeImportRequest(BaseModel):
     url: str
     language_mode: Literal["auto", "en", "he", "mixed"] = "auto"
     context: str = ""
+    speaker_count: int | None = Field(default=None, ge=1, le=4)
 
 
 class YouTubeImportResponse(BaseModel):
@@ -85,6 +86,9 @@ class YouTubeImportResponse(BaseModel):
     videoId: str
     webpageUrl: str
     durationSeconds: int | None = None
+    diarizationMethod: Literal["pyannote", "acoustic", "none"] = "none"
+    speakerCount: int = Field(default=1, ge=1, le=4)
+    speakerAttributionReliable: bool = False
 
 
 class StudyTopic(BaseModel):
@@ -183,6 +187,9 @@ class TranscriptionResponse(BaseModel):
     engine: str
     model: str
     diarization_enabled: bool
+    diarization_method: Literal["pyannote", "acoustic", "none"] = "none"
+    speaker_count: int = Field(default=1, ge=1, le=4)
+    speaker_attribution_reliable: bool = False
 
 
 class TranscriptionJobStatus(BaseModel):
@@ -200,3 +207,4 @@ class HealthResponse(BaseModel):
     asr_model: str
     device: str
     diarization_available: bool
+    pyannote_available: bool = False

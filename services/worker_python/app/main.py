@@ -8,7 +8,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .analysis import analyze as analyze_segments
-from .engine import diarization_available, model_loaded, release_model, transcribe
+from .engine import diarization_available, model_loaded, pyannote_available, release_model, transcribe
 from .learning import (
     create_social_audit,
     create_study_pack,
@@ -37,18 +37,32 @@ logger = logging.getLogger("transcribe-chats.worker")
 jobs: dict[str, TranscriptionJobStatus] = {}
 job_semaphore = asyncio.Semaphore(1)
 
-app = FastAPI(title="TranscribeChats Worker", version="0.9.0", docs_url="/docs")
+app = FastAPI(title="TranscribeChats Worker", version="0.10.0", docs_url="/docs")
 app.add_middleware(CORSMiddleware, allow_origins=settings.origins, allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["*"])
 
 
 @app.get("/health/live", response_model=HealthResponse)
 async def health_live() -> HealthResponse:
-    return HealthResponse(status="live", model_loaded=model_loaded(), asr_model=settings.asr_model, device=settings.asr_device, diarization_available=diarization_available())
+    return HealthResponse(
+        status="live",
+        model_loaded=model_loaded(),
+        asr_model=settings.asr_model,
+        device=settings.asr_device,
+        diarization_available=diarization_available(),
+        pyannote_available=pyannote_available(),
+    )
 
 
 @app.get("/health/ready", response_model=HealthResponse)
 async def health_ready() -> HealthResponse:
-    return HealthResponse(status="ready", model_loaded=model_loaded(), asr_model=settings.asr_model, device=settings.asr_device, diarization_available=diarization_available())
+    return HealthResponse(
+        status="ready",
+        model_loaded=model_loaded(),
+        asr_model=settings.asr_model,
+        device=settings.asr_device,
+        diarization_available=diarization_available(),
+        pyannote_available=pyannote_available(),
+    )
 
 
 def validate_input(filename: str | None, language_mode: str) -> str:
@@ -58,6 +72,14 @@ def validate_input(filename: str | None, language_mode: str) -> str:
     if language_mode not in {"auto", "en", "he", "mixed"}:
         raise HTTPException(status_code=422, detail="Invalid language mode.")
     return suffix
+
+
+def validate_speaker_count(value: int | None) -> int | None:
+    if value is None:
+        return None
+    if value < 1 or value > 4:
+        raise HTTPException(status_code=422, detail="Speaker count must be between 1 and 4.")
+    return value
 
 
 async def save_upload(file: UploadFile, suffix: str) -> Path:
@@ -80,8 +102,20 @@ async def save_upload(file: UploadFile, suffix: str) -> Path:
         await file.close()
 
 
-async def build_result(path: Path, language_mode: str, analyze: bool, recorded_at: str | None, context: str) -> TranscriptionResponse:
-    segments, languages, duration, used_diarization = await transcribe(path, language_mode, context[:2000])
+async def build_result(
+    path: Path,
+    language_mode: str,
+    analyze: bool,
+    recorded_at: str | None,
+    context: str,
+    speaker_count: int | None = None,
+) -> TranscriptionResponse:
+    segments, languages, duration, diarization_method, detected_speaker_count = await transcribe(
+        path,
+        language_mode,
+        context[:2000],
+        speaker_count,
+    )
     if not segments:
         raise HTTPException(status_code=422, detail="No speech was detected in the media.")
     analysis_result = None
@@ -91,14 +125,33 @@ async def build_result(path: Path, language_mode: str, analyze: bool, recorded_a
         except ValueError:
             reference = datetime.now(timezone.utc)
         analysis_result = await analyze_segments(segments, reference, context[:4000])
-    return TranscriptionResponse(duration_ms=duration, detected_languages=languages, segments=segments, analysis=analysis_result, engine="faster-whisper", model=settings.asr_model, diarization_enabled=used_diarization)
+    return TranscriptionResponse(
+        duration_ms=duration,
+        detected_languages=languages,
+        segments=segments,
+        analysis=analysis_result,
+        engine="faster-whisper",
+        model=settings.asr_model,
+        diarization_enabled=diarization_method != "none",
+        diarization_method=diarization_method,
+        speaker_count=detected_speaker_count,
+        speaker_attribution_reliable=diarization_method == "pyannote" and detected_speaker_count > 1,
+    )
 
 
-async def run_job(job_id: str, target: Path, language_mode: str, analyze: bool, recorded_at: str | None, context: str) -> None:
+async def run_job(
+    job_id: str,
+    target: Path,
+    language_mode: str,
+    analyze: bool,
+    recorded_at: str | None,
+    context: str,
+    speaker_count: int | None,
+) -> None:
     try:
         async with job_semaphore:
-            jobs[job_id] = TranscriptionJobStatus(job_id=job_id, status="processing", progress=25, stage="Transcribing locally")
-            result = await build_result(target, language_mode, False, recorded_at, context)
+            jobs[job_id] = TranscriptionJobStatus(job_id=job_id, status="processing", progress=25, stage="Transcribing and separating speakers locally")
+            result = await build_result(target, language_mode, False, recorded_at, context, speaker_count)
             jobs[job_id] = TranscriptionJobStatus(job_id=job_id, status="processing", progress=85, stage="Analyzing transcript")
             if analyze:
                 release_model()
@@ -123,13 +176,15 @@ async def create_transcription_job(
     context: str = Form(""),
     analyze: bool = Form(True),
     recorded_at: str | None = Form(None),
+    speaker_count: int | None = Form(None),
 ) -> TranscriptionJobStatus:
     suffix = validate_input(file.filename, language_mode)
+    speaker_count = validate_speaker_count(speaker_count)
     target = await save_upload(file, suffix)
     job_id = str(uuid.uuid4())
     status = TranscriptionJobStatus(job_id=job_id, status="queued", progress=15, stage="Queued")
     jobs[job_id] = status
-    asyncio.create_task(run_job(job_id, target, language_mode, analyze, recorded_at, context))
+    asyncio.create_task(run_job(job_id, target, language_mode, analyze, recorded_at, context, speaker_count))
     return status
 
 
@@ -161,7 +216,7 @@ async def analyze_transcript(request: AnalysisRequest) -> Analysis:
 async def import_youtube(request: YouTubeImportRequest) -> YouTubeImportResponse:
     try:
         async with job_semaphore:
-            result = await import_youtube_transcript(request.url, request.language_mode, request.context)
+            result = await import_youtube_transcript(request.url, request.language_mode, request.context, request.speaker_count)
         return YouTubeImportResponse(**result)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -211,9 +266,6 @@ async def build_social_audit(request: LearningRequest) -> SocialAuditAnalysis:
     if not request.transcript.strip():
         raise HTTPException(status_code=400, detail="A transcript is required before conversation audit.")
 
-    # Audit a cleaned analytical copy rather than the raw ASR stream. The raw
-    # transcript remains untouched in the browser/library, but repeated decoder
-    # loops cannot overwhelm Ollama or masquerade as repeated human behaviour.
     quality = sanitize_transcript_text(request.transcript)
     cleaned_transcript = quality.transcript or request.transcript.strip()
     quality_lines = "\n".join(f"- {note}" for note in quality.notes) or "- No specific automatic quality flags were raised."
@@ -221,7 +273,7 @@ async def build_social_audit(request: LearningRequest) -> SocialAuditAnalysis:
 - Treat speech-recognition wording as potentially noisy. Malformed or implausible wording must not be the sole basis for a fine-grained interpretation.
 - Do not weight a claim more heavily merely because the transcript repeats it. Analyze distinct evidence and topic coverage across the whole conversation.
 - Repeated/looped ASR text is not evidence of rumination, emphasis, psychiatric symptoms, gender, personality, or actual repeated behaviour.
-- Speaker labels are fallible transcription metadata, not verified identity. If attribution is uncertain, describe the statement without assigning it to a specific person.
+- Speaker labels are diarization results, not verified identity. Generic Speaker 1/Speaker 2 labels distinguish voices but do not establish names. If attribution is uncertain, do not guess identity.
 - Distinguish what a participant explicitly said from another participant's interpretation of them. Claims about fear of money, abundance, attitude, motives, reliability, or personality remain attributed interpretations unless directly supported by the other person's own words.
 - Do not let a corrupted or repetitive tail section crowd out earlier project, technical, financial, interpersonal, or other substantive topics.
 - uncertaintyNotes should include transcript-quality limitations that materially affect confidence.
@@ -250,10 +302,12 @@ async def transcribe_file(
     context: str = Form(""),
     analyze: bool = Form(True),
     recorded_at: str | None = Form(None),
+    speaker_count: int | None = Form(None),
 ) -> TranscriptionResponse:
     suffix = validate_input(file.filename, language_mode)
+    speaker_count = validate_speaker_count(speaker_count)
     target = await save_upload(file, suffix)
     try:
-        return await build_result(target, language_mode, analyze, recorded_at, context)
+        return await build_result(target, language_mode, analyze, recorded_at, context, speaker_count)
     finally:
         target.unlink(missing_ok=True)

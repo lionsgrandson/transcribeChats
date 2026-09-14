@@ -19,10 +19,16 @@ class Settings(BaseSettings):
     model_cache_dir: Path = Path("/models")
     max_upload_bytes: int = 2_147_483_648
     cors_origins: str = "http://localhost:4173,http://127.0.0.1:4173"
-    enable_diarization: bool = False
+
+    # Speaker diarization is always attempted. pyannote is the preferred engine
+    # when a Hugging Face token is configured; otherwise the built-in acoustic
+    # clustering remains available as a local fallback.
+    enable_diarization: bool = True
     pyannote_token: str | None = None
     pyannote_model: str = "pyannote/speaker-diarization-community-1"
+    pyannote_device: str = "cuda"
     pyannote_metrics_enabled: bool = False
+
     ollama_url: str | None = None
     # start-all.mjs can automatically choose a larger model on machines with
     # enough memory. This remains the standalone Docker/default fallback.

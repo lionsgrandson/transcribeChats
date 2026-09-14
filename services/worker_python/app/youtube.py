@@ -174,10 +174,17 @@ def _download_audio(url: str, target_dir: Path) -> Path:
     return max(files, key=lambda path: path.stat().st_size)
 
 
-async def import_youtube_transcript(url: str, language_mode: str, context: str) -> dict:
+async def import_youtube_transcript(
+    url: str,
+    language_mode: str,
+    context: str,
+    speaker_count: int | None = None,
+) -> dict:
     value = _validate_url(url)
     if language_mode not in {"auto", "en", "he", "mixed"}:
         raise ValueError("Invalid language mode.")
+    if speaker_count is not None and not 1 <= speaker_count <= 4:
+        raise ValueError("Speaker count must be between 1 and 4.")
 
     try:
         info = await asyncio.to_thread(_extract_info, value)
@@ -189,20 +196,15 @@ async def import_youtube_transcript(url: str, language_mode: str, context: str) 
     webpage_url = str(info.get("webpage_url") or value)
     duration = info.get("duration")
 
+    # Keep captions as a resilient fallback, but prefer the audio path because
+    # captions generally do not contain trustworthy speaker identity/timestamps.
+    caption_text: str | None = None
     caption_track = _pick_caption_track(info, language_mode)
     if caption_track:
         try:
-            caption_text = await asyncio.to_thread(_download_caption, caption_track)
-            if len(caption_text) >= 80:
-                return {
-                    "title": title,
-                    "sourceName": f"YouTube · {title}",
-                    "transcript": caption_text,
-                    "method": "captions",
-                    "videoId": video_id,
-                    "webpageUrl": webpage_url,
-                    "durationSeconds": int(duration) if duration is not None else None,
-                }
+            candidate = await asyncio.to_thread(_download_caption, caption_track)
+            if len(candidate) >= 80:
+                caption_text = candidate
         except (httpx.HTTPError, json.JSONDecodeError, UnicodeDecodeError):
             pass
 
@@ -210,22 +212,43 @@ async def import_youtube_transcript(url: str, language_mode: str, context: str) 
     try:
         try:
             audio_path = await asyncio.to_thread(_download_audio, value, temp_dir)
-        except DownloadError as error:
-            raise RuntimeError(f"Could not download audio from that YouTube video: {error}") from error
-        if audio_path.stat().st_size > settings.max_upload_bytes:
-            raise ValueError("The YouTube audio exceeds the configured local worker file limit.")
-        segments, _languages, _duration_ms, _used_diarization = await transcribe(audio_path, language_mode, context[:2000])
-        if not segments:
-            raise ValueError("No speech was detected in the YouTube video.")
-        transcript = "\n".join(f"{segment.speaker_label}: {segment.text}" for segment in segments if segment.text.strip())
-        return {
-            "title": title,
-            "sourceName": f"YouTube · {title}",
-            "transcript": transcript,
-            "method": "whisper",
-            "videoId": video_id,
-            "webpageUrl": webpage_url,
-            "durationSeconds": int(duration) if duration is not None else None,
-        }
+            if audio_path.stat().st_size > settings.max_upload_bytes:
+                raise ValueError("The YouTube audio exceeds the configured local worker file limit.")
+            segments, _languages, _duration_ms, diarization_method, detected_speaker_count = await transcribe(
+                audio_path,
+                language_mode,
+                context[:2000],
+                speaker_count,
+            )
+            if not segments:
+                raise ValueError("No speech was detected in the YouTube video.")
+            transcript = "\n".join(f"{segment.speaker_label}: {segment.text}" for segment in segments if segment.text.strip())
+            return {
+                "title": title,
+                "sourceName": f"YouTube · {title}",
+                "transcript": transcript,
+                "method": "whisper",
+                "videoId": video_id,
+                "webpageUrl": webpage_url,
+                "durationSeconds": int(duration) if duration is not None else None,
+                "diarizationMethod": diarization_method,
+                "speakerCount": detected_speaker_count,
+                "speakerAttributionReliable": diarization_method == "pyannote" and detected_speaker_count > 1,
+            }
+        except (DownloadError, RuntimeError, ValueError, OSError):
+            if not caption_text:
+                raise
+            return {
+                "title": title,
+                "sourceName": f"YouTube · {title}",
+                "transcript": caption_text,
+                "method": "captions",
+                "videoId": video_id,
+                "webpageUrl": webpage_url,
+                "durationSeconds": int(duration) if duration is not None else None,
+                "diarizationMethod": "none",
+                "speakerCount": 1,
+                "speakerAttributionReliable": False,
+            }
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
