@@ -36,12 +36,12 @@ class EngineLanguageTests(unittest.TestCase):
         self.assertIn("Acme", prompt)
         self.assertIn("Acme", FakeWhisperModel.options["hotwords"])
 
-    def test_high_accuracy_decoding_is_used(self):
+    def test_high_accuracy_decoding_avoids_previous_text_loop_feedback(self):
         with patch("app.engine._get_model", return_value=FakeWhisperModel()):
             _transcribe_sync(Path("meeting.m4a"), "auto", "")
         self.assertEqual(FakeWhisperModel.options["beam_size"], settings.asr_beam_size)
         self.assertEqual(FakeWhisperModel.options["temperature"], 0.0)
-        self.assertTrue(FakeWhisperModel.options["condition_on_previous_text"])
+        self.assertFalse(FakeWhisperModel.options["condition_on_previous_text"])
         self.assertEqual(FakeWhisperModel.options["vad_parameters"]["min_silence_duration_ms"], settings.asr_vad_min_silence_ms)
 
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from .diarization import apply_participant_names, diarize_acoustically
 from .schemas import Segment
 from .settings import settings
+from .transcript_quality import sanitize_segments
 
 _model = None
 _model_lock = threading.Lock()
@@ -96,7 +97,11 @@ def _transcribe_sync(path: Path, language_mode: str, context: str) -> tuple[list
         multilingual=mixed,
         language_detection_segments=5 if mixed else 3,
         language_detection_threshold=0.4 if mixed else 0.5,
-        condition_on_previous_text=True,
+        # Previous-text conditioning can amplify one bad decode into a long
+        # hallucinated loop. For conversational recordings, independently decode
+        # VAD segments and repair continuity downstream rather than feeding a bad
+        # segment back into Whisper as context.
+        condition_on_previous_text=False,
         initial_prompt=" ".join(prompt_parts) or None,
         hotwords=clean_context[:1000] or None,
         hallucination_silence_threshold=1.5,
@@ -121,6 +126,12 @@ def _transcribe_sync(path: Path, language_mode: str, context: str) -> tuple[list
                 confidence=confidence,
             )
         )
+
+    # A second guard catches decoder/segmentation loops that still make it through
+    # Whisper. Keep up to two repetitions so genuine emphasis is not erased, but
+    # do not allow a repeated bad segment to dominate later Ollama analysis.
+    segments, _quality_notes = sanitize_segments(segments)
+
     duration = round(info.duration * 1000) if getattr(info, "duration", None) else (segments[-1].end_ms if segments else None)
     detected = []
     for segment in segments:

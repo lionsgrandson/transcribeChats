@@ -29,6 +29,7 @@ from .schemas import (
     YouTubeImportResponse,
 )
 from .settings import settings
+from .transcript_quality import sanitize_transcript_text
 from .youtube import import_youtube_transcript
 
 SUPPORTED_EXTENSIONS = {".mp3", ".m4a", ".mp4", ".mov", ".wav", ".webm", ".mpeg", ".mpga", ".ogg", ".flac"}
@@ -209,9 +210,34 @@ async def build_study_pack(request: LearningRequest) -> StudyAnalysis:
 async def build_social_audit(request: LearningRequest) -> SocialAuditAnalysis:
     if not request.transcript.strip():
         raise HTTPException(status_code=400, detail="A transcript is required before conversation audit.")
+
+    # Audit a cleaned analytical copy rather than the raw ASR stream. The raw
+    # transcript remains untouched in the browser/library, but repeated decoder
+    # loops cannot overwhelm Ollama or masquerade as repeated human behaviour.
+    quality = sanitize_transcript_text(request.transcript)
+    cleaned_transcript = quality.transcript or request.transcript.strip()
+    quality_lines = "\n".join(f"- {note}" for note in quality.notes) or "- No specific automatic quality flags were raised."
+    audit_rules = f"""AUDIT PROCESSING RULES (system-generated; these are not claims made by either participant):
+- Treat speech-recognition wording as potentially noisy. Malformed or implausible wording must not be the sole basis for a fine-grained interpretation.
+- Do not weight a claim more heavily merely because the transcript repeats it. Analyze distinct evidence and topic coverage across the whole conversation.
+- Repeated/looped ASR text is not evidence of rumination, emphasis, psychiatric symptoms, gender, personality, or actual repeated behaviour.
+- Speaker labels are fallible transcription metadata, not verified identity. If attribution is uncertain, describe the statement without assigning it to a specific person.
+- Distinguish what a participant explicitly said from another participant's interpretation of them. Claims about fear of money, abundance, attitude, motives, reliability, or personality remain attributed interpretations unless directly supported by the other person's own words.
+- Do not let a corrupted or repetitive tail section crowd out earlier project, technical, financial, interpersonal, or other substantive topics.
+- uncertaintyNotes should include transcript-quality limitations that materially affect confidence.
+
+AUTOMATIC TRANSCRIPT QUALITY FLAGS:
+{quality_lines}"""
+    combined_context = "\n\n".join(part for part in [request.context.strip(), audit_rules] if part)
+    cleaned_request = request.model_copy(update={"transcript": cleaned_transcript, "context": combined_context})
+
     release_model()
     try:
-        return await create_social_audit(request)
+        result = await create_social_audit(cleaned_request)
+        for note in quality.notes:
+            if note not in result.uncertaintyNotes:
+                result.uncertaintyNotes.append(note)
+        return result
     except Exception as error:
         logger.exception("Conversation audit failed")
         raise HTTPException(status_code=502, detail=f"Conversation audit failed: {error}") from error
