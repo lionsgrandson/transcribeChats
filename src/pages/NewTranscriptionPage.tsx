@@ -17,7 +17,7 @@ export function NewTranscriptionPage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { settings, createManual, processMedia, workerReady } = useAppStore();
+  const { settings, createManual, processMedia, runOllamaAnalysis, workerReady, showToast } = useAppStore();
   const initial = params.get('mode');
   const [mode, setMode] = useState<Mode>(initial === 'record' || initial === 'upload' || initial === 'text' ? initial : 'record');
   const [title, setTitle] = useState('');
@@ -58,6 +58,17 @@ export function NewTranscriptionPage() {
     setBusy(true); setError(undefined);
     try {
       const id = await createManual({ title, text, languageMode, context, recordedAt: new Date(recordedAt).toISOString() });
+      if (workerReady !== false) {
+        try {
+          await runOllamaAnalysis(id);
+        } catch (reason) {
+          showToast(reason instanceof Error
+            ? `Conversation saved, but high-accuracy Ollama analysis failed: ${reason.message}`
+            : 'Conversation saved, but high-accuracy Ollama analysis failed. Open it and retry Analyze with Ollama.');
+        }
+      } else {
+        showToast('Conversation saved with basic fallback analysis because the local Ollama worker is offline. Start the worker and run Analyze with Ollama for the accurate CRM analysis.');
+      }
       navigate(`/transcriptions/${id}`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save the conversation.'); }
     finally { setBusy(false); }
@@ -133,6 +144,7 @@ export function NewTranscriptionPage() {
           {mode === 'text' && <Field label={t('manualText')}><textarea className="manual-text" value={text} onChange={(event) => setText(event.target.value)} placeholder="Paste a conversation or meeting notes…" dir="auto" /></Field>}
         </div>
         {mode !== 'text' && workerReady === false && <div className="banner banner-warning"><AlertTriangle size={18} /><span>{t('workerUnavailable')}</span></div>}
+        {mode === 'text' && workerReady === false && <div className="banner banner-warning"><AlertTriangle size={18} /><span>The local Ollama worker is offline. The conversation can still be saved, but only the basic fallback analysis will run until you start the worker and re-run Ollama analysis.</span></div>}
         {error && <div className="banner banner-error"><AlertTriangle size={18} /><span>{error}</span></div>}
         {mode !== 'record' && <div className="form-actions"><Button variant="ghost" onClick={() => navigate(-1)}>{t('cancel')}</Button><Button busy={busy} onClick={() => void (mode === 'text' ? submitText() : submitFile())}>{mode === 'text' ? t('processText') : 'Upload and transcribe'}</Button></div>}
       </Card>
