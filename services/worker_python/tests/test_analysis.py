@@ -21,9 +21,10 @@ class FakeOllamaResponse:
 
 class FakeOllamaClient:
     payload = None
+    payloads = []
 
     def __init__(self, *args, **kwargs):
-        pass
+        FakeOllamaClient.payloads = []
 
     async def __aenter__(self):
         return self
@@ -33,6 +34,7 @@ class FakeOllamaClient:
 
     async def post(self, url, json):
         FakeOllamaClient.payload = json
+        FakeOllamaClient.payloads.append(json)
         return FakeOllamaResponse()
 
 
@@ -44,6 +46,7 @@ class FakeDatedEventResponse(FakeOllamaResponse):
 class FakeDatedEventClient(FakeOllamaClient):
     async def post(self, url, json):
         FakeOllamaClient.payload = json
+        FakeOllamaClient.payloads.append(json)
         return FakeDatedEventResponse()
 
 
@@ -93,6 +96,28 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(result.items[0].status, "needs_review")
         self.assertIsNone(result.items[0].startsAt)
 
+    def test_planned_meeting_on_weekday_is_timeline_event_not_task(self):
+        segments = [Segment(id="s5", sequence_no=0, start_ms=0, end_ms=1000, text="There is a meeting on Thursday with the supplier.")]
+        result = analyze_rules(segments, datetime(2026, 9, 15, 14, 0, tzinfo=timezone.utc))
+        self.assertEqual(len(result.items), 1)
+        item = result.items[0]
+        self.assertEqual(item.kind, "event")
+        self.assertTrue(item.startsAt.startswith("2026-09-17T00:00"))
+        self.assertIn("date-only", item.tags)
+        self.assertIn("time is not", item.uncertaintyReason.lower())
+
+    def test_hebrew_planned_meeting_on_weekday_is_timeline_event(self):
+        segments = [Segment(id="s6", sequence_no=0, start_ms=0, end_ms=1000, text="יש לנו פגישה ביום חמישי עם הספק.", language="he")]
+        result = analyze_rules(segments, datetime(2026, 9, 15, 14, 0, tzinfo=timezone.utc))
+        self.assertEqual(result.items[0].kind, "event")
+        self.assertTrue(result.items[0].startsAt.startswith("2026-09-17T00:00"))
+
+    def test_request_to_schedule_meeting_stays_a_task(self):
+        segments = [Segment(id="s7", sequence_no=0, start_ms=0, end_ms=1000, text="Schedule a meeting with Dana on Thursday.")]
+        result = analyze_rules(segments, datetime(2026, 9, 15, 14, 0, tzinfo=timezone.utc))
+        self.assertEqual(result.items[0].kind, "task")
+        self.assertTrue(result.items[0].dueAt.startswith("2026-09-17T00:00"))
+
     def test_assigns_a_source_when_an_ai_item_omits_it(self):
         segments = [
             Segment(id="s1", sequence_no=0, start_ms=0, end_ms=1000, text="The launch remains private."),
@@ -130,18 +155,22 @@ class AnalysisTests(unittest.TestCase):
 
 
 class OllamaAnalysisTests(unittest.IsolatedAsyncioTestCase):
-    async def test_disables_thinking_and_parses_structured_chat_output(self):
+    async def test_uses_reasoning_and_runs_a_second_verification_pass(self):
         segments = [Segment(id="s1", sequence_no=0, start_ms=0, end_ms=1000, text="We decided to ship Friday.")]
-        with patch.object(settings, "ollama_url", "http://ollama"), patch("app.analysis.httpx.AsyncClient", FakeOllamaClient):
+        with patch.object(settings, "ollama_url", "http://ollama"), patch.object(settings, "ollama_model", "qwen3:30b"), patch("app.analysis.httpx.AsyncClient", FakeOllamaClient):
             result = await analyze(segments, datetime(2026, 7, 11, tzinfo=timezone.utc), "People: Dana")
         self.assertEqual(result.summary, "Useful summary")
-        self.assertFalse(FakeOllamaClient.payload["think"])
-        self.assertEqual(FakeOllamaClient.payload["messages"][0]["role"], "user")
-        self.assertEqual(FakeOllamaClient.payload["keep_alive"], "5m")
+        self.assertEqual(len(FakeOllamaClient.payloads), 2)
+        self.assertTrue(FakeOllamaClient.payloads[0]["think"])
+        self.assertTrue(FakeOllamaClient.payloads[1]["think"])
+        self.assertEqual(FakeOllamaClient.payloads[0]["messages"][0]["role"], "user")
+        self.assertIn("company, product, system, project", FakeOllamaClient.payloads[0]["messages"][0]["content"])
+        self.assertIn("Audit and correct the draft analysis", FakeOllamaClient.payloads[1]["messages"][0]["content"])
+        self.assertEqual(FakeOllamaClient.payloads[0]["keep_alive"], "5m")
 
     async def test_uses_the_explicit_source_time_instead_of_model_timezone_drift(self):
         segments = [Segment(id="s1", sequence_no=0, start_ms=0, end_ms=1000, text="Let's have a launch meeting tomorrow at 14:00.")]
-        with patch.object(settings, "ollama_url", "http://ollama"), patch("app.analysis.httpx.AsyncClient", FakeDatedEventClient):
+        with patch.object(settings, "ollama_url", "http://ollama"), patch.object(settings, "ollama_model", "qwen3:30b"), patch("app.analysis.httpx.AsyncClient", FakeDatedEventClient):
             result = await analyze(segments, datetime(2026, 7, 11, tzinfo=timezone.utc), "")
         self.assertEqual(result.items[0].kind, "event")
         self.assertEqual(result.items[0].startsAt, "2026-07-12T14:00:00")
