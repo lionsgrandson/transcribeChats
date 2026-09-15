@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "node scripts/start-all.mjs",
+    "start:status": "node scripts/start-all.mjs --status",
+    "start:rebuild": "node scripts/start-all.mjs --rebuild",
+    "start:fallback": "node scripts/start-all.mjs --fallback",
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
