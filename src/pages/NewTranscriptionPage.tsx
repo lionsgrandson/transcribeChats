@@ -121,10 +121,10 @@ export function NewTranscriptionPage() {
   return (
     <div className="page page-narrow">
       <header className="page-header"><div><span className="eyebrow">{t('capture')}</span><h1>{t('newTranscript')}</h1><p>{t('newSubtitle')}</p></div></header>
-      <div className="mode-tabs" role="tablist">
-        <button className={mode === 'record' ? 'active' : ''} onClick={() => setMode('record')}><Mic />{t('record')}</button>
-        <button className={mode === 'upload' ? 'active' : ''} onClick={() => setMode('upload')}><FileAudio />{t('upload')}</button>
-        <button className={mode === 'text' ? 'active' : ''} onClick={() => setMode('text')}><Type />{t('addText')}</button>
+      <div className="mode-tabs" role="tablist" aria-label={t('capture')}>
+        <button id="capture-record-tab" type="button" role="tab" aria-selected={mode === 'record'} aria-controls="capture-mode-panel" className={mode === 'record' ? 'active' : ''} onClick={() => setMode('record')}><Mic />{t('record')}</button>
+        <button id="capture-upload-tab" type="button" role="tab" aria-selected={mode === 'upload'} aria-controls="capture-mode-panel" className={mode === 'upload' ? 'active' : ''} onClick={() => setMode('upload')}><FileAudio />{t('upload')}</button>
+        <button id="capture-text-tab" type="button" role="tab" aria-selected={mode === 'text'} aria-controls="capture-mode-panel" className={mode === 'text' ? 'active' : ''} onClick={() => setMode('text')}><Type />{t('addText')}</button>
       </div>
       <Card className="new-card">
         <div className="form-grid two-columns">
@@ -133,19 +133,19 @@ export function NewTranscriptionPage() {
           <Field label={t('language')}><select value={languageMode} onChange={(event) => setLanguageMode(event.target.value as LanguageMode)}><option value="auto">{t('autoDetect')}</option><option value="en">{t('english')}</option><option value="he">{t('hebrew')}</option><option value="mixed">{t('mixed')}</option></select></Field>
           <Field label={t('context')} hint={mode === 'text' ? 'Used by Ollama to understand names, roles, terminology, and intent. The pasted transcript itself is not rewritten.' : 'Whisper uses names and terms for spelling. Two or more names also guide local speaker separation and are assigned in first-detected-voice order; verify the labels afterward.'}><input value={context} onChange={(event) => setContext(event.target.value)} placeholder="People: Dana, Noam · Terms: Acme, Q3 launch" dir="auto" /></Field>
         </div>
-        <div className="capture-panel">
+        <div id="capture-mode-panel" className="capture-panel" role="tabpanel" aria-labelledby={`capture-${mode}-tab`}>
           {mode === 'record' && <div className="record-panel">
             <div className={`record-visual ${recording ? 'is-recording' : ''}`}><span className="record-pulse"><Mic /></span><strong>{recording ? formatDuration(seconds * 1000) : t('microphoneReady')}</strong><p>{recording ? (paused ? 'Recording paused. Your audio is safe.' : 'Recording and saving locally…') : t('recordingConsent')}</p></div>
             <div className="record-actions">{!recording ? <Button onClick={() => void startRecording()}><Mic size={18} />{t('startRecording')}</Button> : <><Button variant="secondary" onClick={togglePause}>{paused ? <Play size={18} /> : <Pause size={18} />}{paused ? t('resume') : t('pause')}</Button><Button variant="danger" busy={busy} onClick={() => void stopRecording()}><Square size={17} />{t('stopRecording')}</Button></>}</div>
           </div>}
           {mode === 'upload' && <div className={`drop-zone ${dragging ? 'dragging' : ''}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); selectFile(event.dataTransfer.files[0]); }}>
-            {file ? <div className="selected-file"><FileAudio size={34} /><div><strong>{file.name}</strong><span>{(file.size / 1024 / 1024).toFixed(1)} MB · {file.type || 'media'}</span></div><button className="icon-button" onClick={() => setFile(undefined)} aria-label="Remove file"><X /></button></div> : <><UploadCloud size={40} /><strong>{t('dropFile')}</strong><span>{t('supportedFormats')}</span><label className="button button-secondary file-button">{t('chooseFile')}<input type="file" accept="audio/*,video/*,.mp3,.m4a,.mp4,.mov,.wav" onChange={(event) => selectFile(event.target.files?.[0])} /></label></>}
+            {file ? <div className="selected-file"><FileAudio size={34} /><div><strong>{file.name}</strong><span>{(file.size / 1024 / 1024).toFixed(1)} MB · {file.type || 'media'}</span></div><button type="button" className="icon-button" onClick={() => setFile(undefined)} aria-label="Remove file"><X /></button></div> : <><UploadCloud size={40} /><strong>{t('dropFile')}</strong><span>{t('supportedFormats')}</span><label className="button button-secondary file-button">{t('chooseFile')}<input type="file" accept="audio/*,video/*,.mp3,.m4a,.mp4,.mov,.wav" onChange={(event) => selectFile(event.target.files?.[0])} /></label></>}
           </div>}
           {mode === 'text' && <Field label={t('manualText')}><textarea className="manual-text" value={text} onChange={(event) => setText(event.target.value)} placeholder="Paste a conversation or meeting notes…" dir="auto" /></Field>}
         </div>
-        {mode !== 'text' && workerReady === false && <div className="banner banner-warning"><AlertTriangle size={18} /><span>{t('workerUnavailable')}</span></div>}
-        {mode === 'text' && workerReady === false && <div className="banner banner-warning"><AlertTriangle size={18} /><span>The local Ollama worker is offline. The conversation can still be saved, but only the basic fallback analysis will run until you start the worker and re-run Ollama analysis.</span></div>}
-        {error && <div className="banner banner-error"><AlertTriangle size={18} /><span>{error}</span></div>}
+        {mode !== 'text' && workerReady === false && <div className="banner banner-warning" role="status"><AlertTriangle size={18} aria-hidden="true" /><span>{t('workerUnavailable')}</span></div>}
+        {mode === 'text' && workerReady === false && <div className="banner banner-warning" role="status"><AlertTriangle size={18} aria-hidden="true" /><span>The local Ollama worker is offline. The conversation can still be saved, but only the basic fallback analysis will run until you start the worker and re-run Ollama analysis.</span></div>}
+        {error && <div className="banner banner-error" role="alert"><AlertTriangle size={18} aria-hidden="true" /><span>{error}</span></div>}
         {mode !== 'record' && <div className="form-actions"><Button variant="ghost" onClick={() => navigate(-1)}>{t('cancel')}</Button><Button busy={busy} onClick={() => void (mode === 'text' ? submitText() : submitFile())}>{mode === 'text' ? t('processText') : 'Upload and transcribe'}</Button></div>}
       </Card>
     </div>
