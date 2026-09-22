@@ -1,5 +1,5 @@
 import { BrainCircuit, CalendarDays, CheckSquare2, CirclePlus, Clock3, Home, Languages, Menu, MessageCircleMore, Search, Settings, Wifi, WifiOff, X } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useTranslation } from '../i18n/useTranslation';
 import { useAppStore } from '../state/AppStore';
@@ -12,6 +12,28 @@ export function AppShell() {
   const navigate = useNavigate();
   const { t, locale } = useTranslation();
   const { online, updateSettings, toast } = useAppStore();
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+      if (event.key === 'Escape') {
+        setSearchOpen(false);
+        setMobileOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileOpen && !searchOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [mobileOpen, searchOpen]);
   const nav = [
     { to: '/', label: t('home'), icon: Home },
     { to: '/new', label: t('newTranscript'), icon: CirclePlus },
@@ -29,26 +51,27 @@ export function AppShell() {
   };
   return (
     <div className="app-shell">
-      <aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`}>
-        <div className="brand"><span className="brand-mark">T</span><span>{t('appName')}</span><button className="icon-button sidebar-close" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X /></button></div>
+      <a className="skip-link" href="#main-content">{locale === 'he' ? 'דלג לתוכן' : 'Skip to content'}</a>
+      <aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`} aria-label={t('appName')}>
+        <div className="brand"><span className="brand-mark">T</span><span>{t('appName')}</span><button type="button" className="icon-button sidebar-close" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X /></button></div>
         <nav className="main-nav" aria-label="Primary">
           {nav.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} onClick={() => setMobileOpen(false)}><Icon size={20} /><span>{label}</span></NavLink>)}
         </nav>
         <div className="sidebar-footer">
-          <div className={`connectivity ${online ? 'is-online' : 'is-offline'}`}>{online ? <Wifi size={16} /> : <WifiOff size={16} />}{online ? t('online') : t('offline')}</div>
-          <button className="language-toggle" onClick={() => void updateSettings({ locale: locale === 'en' ? 'he' : 'en' })}><Languages size={18} />{locale === 'en' ? 'עברית' : 'English'}</button>
+          <div className={`connectivity ${online ? 'is-online' : 'is-offline'}`} role="status" aria-live="polite">{online ? <Wifi size={16} /> : <WifiOff size={16} />}{online ? t('online') : t('offline')}</div>
+          <button type="button" className="language-toggle" onClick={() => void updateSettings({ locale: locale === 'en' ? 'he' : 'en' })}><Languages size={18} />{locale === 'en' ? 'עברית' : 'English'}</button>
         </div>
       </aside>
-      {mobileOpen && <button className="sidebar-scrim" onClick={() => setMobileOpen(false)} aria-label="Close navigation" />}
+      {mobileOpen && <button type="button" className="sidebar-scrim" onClick={() => setMobileOpen(false)} aria-label="Close navigation" />}
       <div className="app-main">
         <header className="topbar">
-          <button className="icon-button mobile-menu" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><Menu /></button>
-          <button className="search-trigger" onClick={() => setSearchOpen(true)}><Search size={18} /><span>{t('search')}</span><kbd>Ctrl K</kbd></button>
-          <div className="topbar-actions"><span className={`sync-dot ${online ? 'online' : ''}`} title={online ? t('online') : t('offline')} /><Button variant="primary" onClick={() => navigate('/new')}><CirclePlus size={18} /><span>{t('newTranscript')}</span></Button></div>
+          <button type="button" className="icon-button mobile-menu" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><Menu /></button>
+          <button type="button" className="search-trigger" onClick={() => setSearchOpen(true)} aria-haspopup="dialog" aria-expanded={searchOpen}><Search size={18} /><span>{t('search')}</span><kbd>Ctrl K</kbd></button>
+          <div className="topbar-actions"><span className={`sync-dot ${online ? 'online' : ''}`} title={online ? t('online') : t('offline')} aria-hidden="true" /><Button variant="primary" onClick={() => navigate('/new')}><CirclePlus size={18} /><span>{t('newTranscript')}</span></Button></div>
         </header>
-        <main><Outlet /></main>
+        <main id="main-content" tabIndex={-1}><Outlet /></main>
       </div>
-      {searchOpen && <div className="search-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}><form className="global-search" onSubmit={doSearch}><Search /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('search')} /><button type="button" className="icon-button" onClick={() => setSearchOpen(false)}><X /></button></form></div>}
+      {searchOpen && <div className="search-overlay" role="dialog" aria-modal="true" aria-label={t('search')} onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}><form className="global-search" role="search" onSubmit={doSearch}><Search aria-hidden="true" /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('search')} aria-label={t('search')} /><button type="button" className="icon-button" onClick={() => setSearchOpen(false)} aria-label="Close search"><X /></button></form></div>}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   );
