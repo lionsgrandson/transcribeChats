@@ -1,3 +1,4 @@
+import { useEffect, useId, useRef } from 'react';
 import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from 'react';
 import { AlertCircle, CheckCircle2, Inbox, LoaderCircle, X } from 'lucide-react';
 import { useTranslation } from '../i18n/useTranslation';
@@ -5,7 +6,7 @@ import type { TranslationKey } from '../i18n/translations';
 
 export function Button({ children, className = '', variant = 'primary', busy, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'ghost' | 'danger'; busy?: boolean }) {
   return (
-    <button className={`button button-${variant} ${className}`} {...props} disabled={props.disabled || busy}>
+    <button className={`button button-${variant} ${className}`} {...props} disabled={props.disabled || busy} aria-busy={busy || undefined}>
       {busy && <LoaderCircle size={17} className="spin" aria-hidden="true" />}
       {children}
     </button>
@@ -27,7 +28,7 @@ export function EmptyState({ title, body, action, icon }: { title: string; body:
 
 export function ErrorState({ title, body, action }: { title: string; body?: string; action?: ReactNode }) {
   return (
-    <div className="empty-state error-state">
+    <div className="empty-state error-state" role="alert">
       <div className="empty-icon" aria-hidden="true"><AlertCircle size={26} /></div>
       <h3>{title}</h3>{body && <p>{body}</p>}{action}
     </div>
@@ -35,7 +36,7 @@ export function ErrorState({ title, body, action }: { title: string; body?: stri
 }
 
 export function SuccessBanner({ children }: { children: ReactNode }) {
-  return <div className="banner banner-success"><CheckCircle2 size={18} />{children}</div>;
+  return <div className="banner banner-success" role="status"><CheckCircle2 size={18} aria-hidden="true" />{children}</div>;
 }
 
 export function Skeleton({ className = '' }: { className?: string }) {
@@ -53,11 +54,34 @@ export function StatusBadge({ status }: { status: string }) {
 }
 
 export function Modal({ open, title, onClose, children, wide = false }: { open: boolean; title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const titleId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    window.setTimeout(() => {
+      const target = dialogRef.current?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])');
+      (target || dialogRef.current)?.focus();
+    }, 0);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previous?.focus();
+    };
+  }, [open, onClose]);
+
   if (!open) return null;
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className={`modal ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
-        <header className="modal-header"><h2 id="modal-title">{title}</h2><button className="icon-button" onClick={onClose} aria-label="Close"><X size={20} /></button></header>
+      <section ref={dialogRef} tabIndex={-1} className={`modal ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <header className="modal-header"><h2 id={titleId}>{title}</h2><button type="button" className="icon-button" onClick={onClose} aria-label="Close"><X size={20} /></button></header>
         <div className="modal-body">{children}</div>
       </section>
     </div>
