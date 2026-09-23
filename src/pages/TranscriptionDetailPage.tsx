@@ -36,6 +36,7 @@ function ItemRow({ item, transcriptionTitle, selected, onSelect, onUpdate, onDel
   const [kind, setKind] = useState(item.kind);
   const [date, setDate] = useState((item.kind === 'event' ? item.startsAt : item.dueAt)?.slice(0, 16) || '');
   const [crmState, setCrmState] = useState<CrmTransferState>('idle');
+  const [statusBusy, setStatusBusy] = useState(false);
   const kindLabel = item.kind === 'task' ? t('taskSingular') : item.kind === 'event' ? t('eventSingular') : item.kind === 'note' ? t('noteSingular') : item.kind === 'takeaway' ? t('takeawaySingular') : t('summary');
   const priorityLabel = item.priority === 'low' ? t('low') : item.priority === 'medium' ? t('medium') : item.priority === 'high' ? t('high') : item.priority === 'urgent' ? t('urgent') : '';
   const showBody = Boolean(item.body?.trim() && item.body.trim() !== item.title.trim());
@@ -44,6 +45,15 @@ function ItemRow({ item, transcriptionTitle, selected, onSelect, onUpdate, onDel
     const timestamp = date && (kind === 'task' || kind === 'event') ? new Date(date).toISOString() : undefined;
     await onUpdate({ title: title.trim(), kind, startsAt: kind === 'event' ? timestamp : undefined, dueAt: kind === 'task' ? timestamp : undefined });
     setEditing(false);
+  };
+  const toggleTaskStatus = async () => {
+    if (statusBusy) return;
+    setStatusBusy(true);
+    try {
+      await onUpdate({ status: item.status === 'completed' ? 'open' : 'completed', confirmed: true });
+    } finally {
+      setStatusBusy(false);
+    }
   };
   const sendToCrm = async () => {
     if (item.status === 'completed' || item.status === 'dismissed') return;
@@ -58,7 +68,7 @@ function ItemRow({ item, transcriptionTitle, selected, onSelect, onUpdate, onDel
   };
   return <div className={`item-row ${item.status === 'completed' ? 'is-completed' : ''}`}>
     {item.kind === 'task' && <input className="bulk-checkbox" type="checkbox" checked={selected} disabled={item.status === 'completed' || item.status === 'dismissed'} onChange={(event) => onSelect(event.target.checked)} aria-label={`Select ${item.title}`} />}
-    {item.kind === 'task' ? <button className={`task-checkbox ${item.status === 'completed' ? 'checked' : ''}`} onClick={() => void onUpdate({ status: item.status === 'completed' ? 'open' : 'completed', confirmed: true })} aria-label={item.status === 'completed' ? t('reopen') : t('complete')}>{item.status === 'completed' && <Check size={15} />}</button> : <span className={`kind-dot kind-${item.kind}`} />}
+    {item.kind === 'task' ? <button className={`task-checkbox ${item.status === 'completed' ? 'checked' : ''}`} disabled={statusBusy} onClick={() => void toggleTaskStatus()} aria-label={item.status === 'completed' ? t('reopen') : t('complete')}>{statusBusy ? <LoaderCircle className="spin" size={13} /> : item.status === 'completed' && <Check size={15} />}</button> : <span className={`kind-dot kind-${item.kind}`} />}
     <div className="item-main">{editing ? <div className="item-edit-grid"><input value={title} onChange={(event) => setTitle(event.target.value)} aria-label="Item title" dir="auto" /><select value={kind} onChange={(event) => setKind(event.target.value as ExtractedItem['kind'])} aria-label="Item type"><option value="task">{t('taskSingular')}</option><option value="event">{t('eventSingular')}</option><option value="note">{t('noteSingular')}</option><option value="takeaway">{t('takeawaySingular')}</option><option value="summary">{t('summary')}</option></select>{(kind === 'task' || kind === 'event') && <input type="datetime-local" value={date} onChange={(event) => setDate(event.target.value)} aria-label={kind === 'event' ? 'Event date and time' : 'Due date'} />}</div> : <><strong dir="auto">{item.title}</strong>{showBody && <p dir="auto" style={{ margin: 0, color: 'var(--muted)', fontSize: 12, lineHeight: 1.55 }}>{item.body}</p>}<div className="item-meta"><span>{kindLabel}</span>{item.assignee && <span>{item.assignee}</span>}{item.dueAt && <span><Clock size={13} />{formatDate(item.dueAt, 'MMM d, HH:mm')}</span>}{item.startsAt && <span><CalendarDays size={13} />{item.tags.includes('date-only') ? formatDate(item.startsAt, 'MMM d') : formatDate(item.startsAt, 'MMM d, HH:mm')}</span>}{item.priority !== 'none' && <span className={`priority priority-${item.priority}`}>{priorityLabel}</span>}</div>{item.uncertaintyReason && <span className="uncertainty"><AlertTriangle size={13} />{item.uncertaintyReason}</span>}</>}</div>
     {item.status === 'needs_review' && <div className="review-actions"><Button onClick={() => void onUpdate({ status: 'open', confirmed: true })}>{t('accept')}</Button><Button variant="ghost" onClick={() => void onUpdate({ status: 'dismissed' })}>{t('dismiss')}</Button></div>}
     <div className="item-actions">{item.kind === 'task' && <><button className="crm-transfer chatgpt-transfer" onClick={() => void onOpenChatGpt()} aria-label={`Open ${item.title} in ChatGPT`} title="Copy this task with its source context and open ChatGPT"><Sparkles size={14} /><span>ChatGPT</span></button><button className={`crm-transfer ${crmState}`} onClick={() => void sendToCrm()} disabled={crmState === 'loading' || item.status === 'completed' || item.status === 'dismissed'} aria-label={`Send ${item.title} to the selected CRM`} title={item.status === 'completed' ? 'Completed tasks are not sent to the CRM.' : item.status === 'dismissed' ? 'Dismissed tasks are not sent to the CRM.' : crmState === 'failure' ? 'CRM sync failed. Check Settings and retry.' : 'Send directly to the CRM selected in Settings'}>{crmState === 'loading' ? <LoaderCircle className="spin" size={14} /> : crmState === 'success' ? <Check size={14} /> : <ExternalLink size={14} />}<span>{crmState === 'success' ? 'CRM synced' : crmState === 'failure' ? 'Retry CRM' : 'Send to CRM'}</span></button></>}{editing ? <><button className="icon-button compact" onClick={() => void save()} aria-label={t('save')}><Save size={15} /></button><button className="icon-button compact" onClick={() => setEditing(false)} aria-label={t('cancel')}><X size={15} /></button></> : <button className="icon-button compact" onClick={() => setEditing(true)} aria-label={t('edit')}><Edit3 size={15} /></button>}<button className="icon-button compact danger-icon" onClick={() => { if (confirm(`Delete “${item.title}”?`)) void onDelete(); }} aria-label={t('delete')}><Trash2 size={15} /></button>{item.sourceSegmentIds[0] && <><button className="evidence-link" onClick={() => onSource(item.sourceSegmentIds[0])}>{t('source')}</button><button className="evidence-link" onClick={() => onPlaySource(item.sourceSegmentIds[0])}><Play size={12} />Play source</button></>}</div>
@@ -166,7 +176,7 @@ export function TranscriptionDetailPage() {
     if (!currentSelectedTasks.length) return store.showToast('Choose at least one unfinished task to mark as done.');
     setCompleteBulkBusy(true);
     try {
-      await Promise.all(currentSelectedTasks.map((item) => store.updateItem(item.id, { status: 'completed', confirmed: true })));
+      await store.updateItems(currentSelectedTasks.map((item) => ({ id: item.id, patch: { status: 'completed', confirmed: true } })));
       setSelectedTaskIds(new Set());
       store.showToast(`${currentSelectedTasks.length} task${currentSelectedTasks.length === 1 ? '' : 's'} marked as done.`);
     } catch (reason) {
