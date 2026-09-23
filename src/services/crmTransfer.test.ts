@@ -134,4 +134,47 @@ describe('CRM task transfer', () => {
     expect(payload.summary).toContain('The homepage should focus on one clear CTA.');
     expect(payload.summary).toContain('Ask for brand assets.');
   });
+
+  it('never sends tasks that are already completed', async () => {
+    const transcription: Transcription = {
+      id: 'transcription-completed-filter', title: 'Completed filter', sourceType: 'upload', status: 'ready', languageMode: 'en',
+      detectedLanguages: ['en'], recordedAt: '2026-09-23T10:00:00.000Z', createdAt: '2026-09-23T10:00:00.000Z',
+      updatedAt: '2026-09-23T10:30:00.000Z', context: 'Client: Acme · Email: client@acme.example', summary: 'Reviewed current work.',
+    };
+    const openTask: ExtractedItem = { ...task, id: 'task-open', transcriptionId: transcription.id, status: 'open', confirmed: true };
+    const completedTask: ExtractedItem = { ...task, id: 'task-completed', transcriptionId: transcription.id, status: 'completed', confirmed: true };
+    await db.transcriptions.add(transcription);
+    await db.items.bulkAdd([openTask, completedTask]);
+
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ accepted: true, tasksCreated: 1, eventsCreated: 0 }), { status: 200 }));
+    await sendTasksToCrm(
+      [toCrmTask(openTask, transcription.title), toCrmTask(completedTask, transcription.title)],
+      { ...defaultSettings, crmEnabled: true, crmProvider: 'codecrafter', crmWebhookUrl: 'https://crm.example/functions/v1/crm-ingest', crmApiToken: 'secret-token' },
+      { contactId: 'client-1', projectId: 'project-1' },
+    );
+
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    const payload = JSON.parse(String(request.body));
+    expect(payload.tasks.map((value: { sourceId: string }) => value.sourceId)).toEqual(['task-open']);
+    expect(payload.destination).toEqual({ contactId: 'client-1', projectId: 'project-1' });
+  });
+
+  it('refuses a selected-task sync when every selected task is completed', async () => {
+    const transcription: Transcription = {
+      id: 'transcription-only-completed', title: 'Only completed', sourceType: 'upload', status: 'ready', languageMode: 'en',
+      detectedLanguages: ['en'], recordedAt: '2026-09-23T10:00:00.000Z', createdAt: '2026-09-23T10:00:00.000Z',
+      updatedAt: '2026-09-23T10:30:00.000Z',
+    };
+    const completedTask: ExtractedItem = { ...task, id: 'task-only-completed', transcriptionId: transcription.id, status: 'completed', confirmed: true };
+    await db.transcriptions.add(transcription);
+    await db.items.add(completedTask);
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+
+    await expect(sendTasksToCrm(
+      [toCrmTask(completedTask, transcription.title)],
+      { ...defaultSettings, crmEnabled: true, crmProvider: 'codecrafter', crmWebhookUrl: 'https://crm.example/functions/v1/crm-ingest', crmApiToken: 'secret-token' },
+    )).rejects.toThrow('Completed or dismissed tasks are not sent to the CRM.');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
 });

@@ -125,7 +125,7 @@ function toCrmEvent(item: ExtractedItem): CrmEventPayload | undefined {
 }
 
 function workspaceNote(transcription: Transcription, items: ExtractedItem[], notes: TranscriptionNote[]): string {
-  const active = items.filter((item) => item.status !== 'dismissed');
+  const active = items.filter((item) => item.status !== 'dismissed' && !(item.kind === 'task' && item.status === 'completed'));
   const extractedNotes = active.filter((item) => ['note', 'takeaway', 'summary'].includes(item.kind));
   const timeline = active
     .filter((item) => item.startsAt || item.dueAt)
@@ -147,6 +147,15 @@ function workspaceNote(transcription: Transcription, items: ExtractedItem[], not
     }).join('\n')}`);
   }
   return parts.join('\n\n').slice(0, 9500);
+}
+
+function crmDestinationKey(destination: CrmDestination): string {
+  const projectKey = destination.projectId || (destination.newProject ? `new:${destination.newProject.name}` : 'none');
+  return destination.contactId
+    ? `client:${destination.contactId}:project:${projectKey}`
+    : destination.newContact
+      ? `new:${destination.newContact.email || destination.newContact.phone || destination.newContact.name}:project:${projectKey}`
+      : `auto:project:${projectKey}`;
 }
 
 function validateSettings(settings: AppSettings): { webhookUrl: string; authorization: string } {
@@ -207,17 +216,12 @@ export async function sendTranscriptionToCrm(transcriptionId: string, settings: 
     db.notes.where('transcriptionId').equals(transcriptionId).toArray(),
   ]);
   const activeItems = workspaceItems.filter((item) => item.status !== 'dismissed');
-  const tasks = activeItems.filter((item) => item.kind === 'task').map((item) => toCrmTask(item, transcription.title));
+  const tasks = activeItems.filter((item) => item.kind === 'task' && item.status !== 'completed').map((item) => toCrmTask(item, transcription.title));
   const events = activeItems
     .filter((item) => item.kind === 'event')
     .map(toCrmEvent)
     .filter((event): event is CrmEventPayload => Boolean(event));
-  const projectKey = destination.projectId || (destination.newProject ? `new:${destination.newProject.name}` : 'none');
-  const destinationKey = destination.contactId
-    ? `client:${destination.contactId}:project:${projectKey}`
-    : destination.newContact
-      ? `new:${destination.newContact.email || destination.newContact.phone || destination.newContact.name}:project:${projectKey}`
-      : `auto:project:${projectKey}`;
+  const destinationKey = crmDestinationKey(destination);
 
   return postToCrm(webhookUrl, authorization, {
     schemaVersion: 3,
@@ -245,16 +249,18 @@ export async function sendTranscriptionToCrm(transcriptionId: string, settings: 
  * For CodeCrafter-compatible CRMs this means tasks, dated events/timeline,
  * summary and notes are attached to the same client card in one import.
  */
-export async function sendTasksToCrm(tasks: CrmTaskPayload[], settings: AppSettings): Promise<CrmTransferResult> {
+export async function sendTasksToCrm(tasks: CrmTaskPayload[], settings: AppSettings, destination: CrmDestination = {}): Promise<CrmTransferResult> {
   if (!tasks.length) throw new Error('Choose at least one task to send to the CRM.');
   const { webhookUrl, authorization } = validateSettings(settings);
 
   const sourceItems = (await Promise.all(tasks.map((task) => db.items.get(task.sourceId))))
     .filter((item): item is ExtractedItem => Boolean(item));
   if (!sourceItems.length) return sendLegacyTasks(tasks, settings, webhookUrl, authorization);
+  const eligibleSourceItems = sourceItems.filter((item) => item.status !== 'completed' && item.status !== 'dismissed');
+  if (!eligibleSourceItems.length) throw new Error('Completed or dismissed tasks are not sent to the CRM.');
 
   const byTranscription = new Map<string, ExtractedItem[]>();
-  for (const item of sourceItems) {
+  for (const item of eligibleSourceItems) {
     const current = byTranscription.get(item.transcriptionId) || [];
     current.push(item);
     byTranscription.set(item.transcriptionId, current);
@@ -279,7 +285,9 @@ export async function sendTasksToCrm(tasks: CrmTaskPayload[], settings: AppSetti
       .filter((item) => item.kind === 'event' && item.status !== 'dismissed')
       .map(toCrmEvent)
       .filter((event): event is CrmEventPayload => Boolean(event));
-    const actionId = `transcribeChats:${transcriptionId}:${selectedTasks.map((task) => task.sourceId).sort().join('|')}`;
+    if (!selectedTasks.length) continue;
+    const destinationKey = crmDestinationKey(destination);
+    const actionId = `transcribeChats:${transcriptionId}:${selectedTasks.map((task) => task.sourceId).sort().join('|')}:destination:${destinationKey}`;
     const result = await postToCrm(webhookUrl, authorization, {
       schemaVersion: 3,
       provider: settings.crmProvider,
@@ -287,7 +295,8 @@ export async function sendTasksToCrm(tasks: CrmTaskPayload[], settings: AppSetti
       occurredAt: new Date().toISOString(),
       externalReference: actionId,
       channel: 'transcribeChats',
-      contact: inferContact(transcription),
+      destination,
+      contact: destination.newContact || inferContact(transcription),
       summary: workspaceNote(transcription, workspaceItems, personalNotes),
       transcription: {
         id: transcription.id,
