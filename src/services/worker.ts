@@ -133,3 +133,30 @@ export async function analyzeWithOllama(workerUrl: string, segments: TranscriptS
   const parsed = z.object({ summary: z.string(), items: z.array(z.record(z.string(), z.unknown())).default([]) }).parse(await response.json());
   return parsed as AnalysisResult;
 }
+
+export async function analyzeSalesWithOllama(workerUrl: string, segments: TranscriptSegment[], recordedAt: string, context: string): Promise<AnalysisResult> {
+  const response = await fetch(`${workerUrl.replace(/\/$/, '')}/v1/analyze-sales`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recorded_at: recordedAt,
+      context,
+      segments: segments.map((segment) => ({
+        id: segment.id,
+        sequence_no: segment.sequenceNo,
+        speaker_label: segment.speakerLabel,
+        start_ms: segment.startMs,
+        end_ms: segment.endMs,
+        text: segment.text,
+        language: segment.language,
+        confidence: segment.confidence
+      }))
+    })
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Sales intelligence returned ${response.status}`);
+  }
+  const parsed = z.object({ summary: z.string(), items: z.array(z.record(z.string(), z.unknown())).default([]) }).parse(await response.json());
+  return parsed as AnalysisResult;
+}
