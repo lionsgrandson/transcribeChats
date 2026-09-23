@@ -1,4 +1,4 @@
-import { CalendarClock, Check, CheckCheck, Download, Edit3, ExternalLink, Filter, LoaderCircle, Plus, Save, Search, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { CalendarClock, Check, CheckCheck, Download, Edit3, ExternalLink, Filter, LoaderCircle, Plus, Save, Search, SlidersHorizontal, Sparkles, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, Card, EmptyState, Field, PageSkeleton, StatusBadge } from '../components/ui';
@@ -6,11 +6,12 @@ import type { ExtractedItem, Priority } from '../domain/types';
 import { useTranslation } from '../i18n/useTranslation';
 import { sendTasksToCrm, toCrmTask } from '../services/crmTransfer';
 import { exportAllTasksCsv } from '../services/exports';
+import { copyTaskToChatGpt } from '../services/taskChatGpt';
 import { useAppStore } from '../state/AppStore';
 
 type ActionState = 'idle' | 'loading' | 'success' | 'failure';
 
-function TaskRow({ item, transcriptionTitle, selected, onSelect, onUpdate, onDelete }: { item: ExtractedItem; transcriptionTitle: string; selected: boolean; onSelect: (selected: boolean) => void; onUpdate: (patch: Partial<ExtractedItem>) => Promise<void>; onDelete: () => Promise<void> }) {
+function TaskRow({ item, transcriptionTitle, selected, onSelect, onUpdate, onDelete, onOpenChatGpt }: { item: ExtractedItem; transcriptionTitle: string; selected: boolean; onSelect: (selected: boolean) => void; onUpdate: (patch: Partial<ExtractedItem>) => Promise<void>; onDelete: () => Promise<void>; onOpenChatGpt: () => Promise<void> }) {
   const { t } = useTranslation();
   const store = useAppStore();
   const [editing, setEditing] = useState(false);
@@ -44,6 +45,7 @@ function TaskRow({ item, transcriptionTitle, selected, onSelect, onUpdate, onDel
     <input className="date-inline" type="datetime-local" value={item.dueAt?.slice(0, 16) || ''} onChange={(event) => void onUpdate({ dueAt: event.target.value ? new Date(event.target.value).toISOString() : undefined })} aria-label="Due date" />
     <div className="task-actions">
       {item.status === 'needs_review' && <Button onClick={() => void onUpdate({ status: 'open', confirmed: true })}>{t('accept')}</Button>}
+      <button className="crm-transfer chatgpt-transfer" onClick={() => void onOpenChatGpt()} aria-label={`Open ${item.title} in ChatGPT`} title="Copy this task with its source context and open ChatGPT"><Sparkles size={14} /><span>ChatGPT</span></button>
       <button className={`crm-transfer ${crmState}`} onClick={() => void sendToCrm()} disabled={crmState === 'loading' || item.status === 'completed' || item.status === 'dismissed'} aria-label={`Send ${item.title} to the selected CRM`} title={item.status === 'completed' ? 'Completed tasks are not sent to the CRM.' : item.status === 'dismissed' ? 'Dismissed tasks are not sent to the CRM.' : crmState === 'failure' ? 'CRM sync failed. Check Settings and retry.' : 'Send directly to the CRM selected in Settings'}>{crmState === 'loading' ? <LoaderCircle className="spin" size={14} /> : crmState === 'success' ? <Check size={14} /> : <ExternalLink size={14} />}<span>{crmState === 'success' ? 'CRM synced' : crmState === 'failure' ? 'Retry CRM' : 'Send to CRM'}</span></button>
       {editing ? <><button className="icon-button compact" onClick={() => void save()} aria-label={t('save')}><Save size={15} /></button><button className="icon-button compact" onClick={cancel} aria-label={t('cancel')}><X size={15} /></button></> : <button className="icon-button compact" onClick={() => setEditing(true)} aria-label={t('edit')}><Edit3 size={15} /></button>}
       <button className="icon-button compact danger-icon" onClick={() => { if (confirm(`Delete task "${item.title}"?`)) void onDelete(); }} aria-label={t('delete')}><Trash2 size={15} /></button>
@@ -122,12 +124,22 @@ export function TasksPage() {
     } catch (reason) { setBulkError(reason instanceof Error ? reason.message : 'Could not sync the selected CRM.'); }
     finally { setBulkAction(null); }
   };
+  const openTaskInChatGpt = async (item: ExtractedItem) => {
+    const transcription = store.transcriptions.find((value) => value.id === item.transcriptionId);
+    if (!transcription) return store.showToast('The source transcription could not be found.');
+    try {
+      await copyTaskToChatGpt(item, transcription, store.tSegments(item.transcriptionId));
+      store.showToast('Task copied. Paste it into the ChatGPT tab that just opened.');
+    } catch (reason) {
+      store.showToast(reason instanceof Error ? reason.message : 'Could not open this task in ChatGPT.');
+    }
+  };
   const exportTasks = () => {
     setExportState('loading');
     try { exportAllTasksCsv(tasks, store.transcriptions); setExportState('success'); window.setTimeout(() => setExportState('idle'), 3000); }
     catch { setExportState('failure'); }
   };
-  const renderTask = (item: ExtractedItem) => <TaskRow key={item.id} item={item} transcriptionTitle={transcriptionTitle(item.transcriptionId)} selected={selected.has(item.id)} onSelect={(value) => toggleSelected(item.id, value)} onUpdate={async (patch) => { if (patch.status === 'completed' || patch.status === 'dismissed') toggleSelected(item.id, false); await store.updateItem(item.id, patch); }} onDelete={() => store.deleteItem(item.id)} />;
+  const renderTask = (item: ExtractedItem) => <TaskRow key={item.id} item={item} transcriptionTitle={transcriptionTitle(item.transcriptionId)} selected={selected.has(item.id)} onSelect={(value) => toggleSelected(item.id, value)} onUpdate={async (patch) => { if (patch.status === 'completed' || patch.status === 'dismissed') toggleSelected(item.id, false); await store.updateItem(item.id, patch); }} onDelete={() => store.deleteItem(item.id)} onOpenChatGpt={() => openTaskInChatGpt(item)} />;
 
   return <div className="page">
     <header className="page-header"><div><span className="eyebrow"><Check size={14} />{t('actionCenter')}</span><h1>{t('tasks')}</h1><p>{t('tasksSubtitle')}</p></div><div className="header-actions"><Button variant="secondary" disabled={!tasks.length || exportState === 'loading'} onClick={exportTasks}>{exportState === 'loading' ? <LoaderCircle className="spin" size={17} /> : exportState === 'success' ? <Check size={17} /> : <Download size={17} />}{exportState === 'success' ? 'Exported' : exportState === 'failure' ? 'Retry export' : 'Export all tasks'}</Button><Button onClick={() => setShowAdd((value) => !value)}><Plus size={17} />{t('addTask')}</Button></div></header>
