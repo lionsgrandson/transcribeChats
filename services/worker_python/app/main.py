@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from .analysis import analyze as analyze_segments
+from .analysis import analyze as analyze_segments, analyze_sales as analyze_sales_segments
 from .engine import diarization_available, model_loaded, pyannote_available, release_model, transcribe
 from .learning import (
     create_social_audit,
@@ -37,7 +37,7 @@ logger = logging.getLogger("transcribe-chats.worker")
 jobs: dict[str, TranscriptionJobStatus] = {}
 job_semaphore = asyncio.Semaphore(1)
 
-app = FastAPI(title="TranscribeChats Worker", version="0.10.0", docs_url="/docs")
+app = FastAPI(title="TranscribeChats Worker", version="0.12.0", docs_url="/docs")
 app.add_middleware(CORSMiddleware, allow_origins=settings.origins, allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["*"])
 
 
@@ -210,6 +210,24 @@ async def analyze_transcript(request: AnalysisRequest) -> Analysis:
     except Exception as error:
         logger.exception("Ollama analysis failed")
         raise HTTPException(status_code=502, detail=f"Ollama analysis failed: {error}") from error
+
+
+
+
+@app.post("/v1/analyze-sales", response_model=Analysis)
+async def analyze_sales_transcript(request: AnalysisRequest) -> Analysis:
+    if not request.segments:
+        raise HTTPException(status_code=400, detail="A transcript is required before sales analysis.")
+    try:
+        reference = datetime.fromisoformat(request.recorded_at.replace("Z", "+00:00")) if request.recorded_at else datetime.now(timezone.utc)
+    except ValueError:
+        reference = datetime.now(timezone.utc)
+    release_model()
+    try:
+        return await analyze_sales_segments(request.segments, reference, request.context[:4000])
+    except Exception as error:
+        logger.exception("Sales intelligence analysis failed")
+        raise HTTPException(status_code=502, detail=f"Sales intelligence analysis failed: {error}") from error
 
 
 @app.post("/v1/youtube/transcript", response_model=YouTubeImportResponse)

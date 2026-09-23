@@ -277,6 +277,94 @@ Check every item:
 Conversation date: {conversation_date.isoformat()}\nContext: {context}\nSchema: {json.dumps(schema, ensure_ascii=False)}\nDRAFT:\n{draft.model_dump_json()}\nTRANSCRIPT:\n{transcript}"""
 
 
+
+SALES_CATEGORY_TAGS = {
+    "sales:business-context",
+    "sales:needs",
+    "sales:budget",
+    "sales:authority",
+    "sales:urgency",
+    "sales:price-sensitivity",
+    "sales:objection",
+    "sales:buying-signal",
+    "sales:communication",
+    "sales:proposal",
+    "sales:next-question",
+    "sales:unknown",
+}
+
+
+def _sales_analysis_prompt(transcript: str, schema: dict, conversation_date: datetime, context: str, quality_notes: list[str]) -> str:
+    quality = "\n".join(f"- {note}" for note in quality_notes) or "- No sanitizer warnings."
+    return f"""Analyze this Hebrew/English client conversation as an evidence-first B2B sales intelligence analyst.
+
+GOAL
+Create a practical post-meeting deal brief from what was actually said. Focus on project purchasing signals, not personal profiling.
+
+REQUIRED COVERAGE
+- Business context and current situation.
+- Needs, pain points, desired outcomes, constraints and implementation concerns.
+- Budget: separate explicit budget/price statements from inference. You may estimate a PROJECT purchasing range only when concrete transcript evidence supports it, such as explicit prices, scope or phase tradeoffs, procurement limits, budget reactions, or comparable project figures. Never invent a number from tone, job title, company size, confidence, accent, appearance, or vague wealth signals. If evidence is insufficient, say budget is unknown.
+- Decision process and authority: who appears able to decide, approve, influence or block, with uncertainty where applicable.
+- Urgency/timeline and why it matters.
+- Price sensitivity, objections, risks, competitors/alternatives and buying signals.
+- Observable communication and decision patterns that affect how to present the proposal, for example repeatedly asking for concrete examples or returning to implementation risk.
+- Recommended proposal framing and the highest-value questions to ask next.
+
+STRICT BOUNDARIES
+- Do NOT diagnose psychology, personality, mental health, intelligence, honesty, deception, financial health, personal wealth or personal income.
+- Do NOT infer sensitive or protected traits.
+- Do NOT infer emotional state from pauses, speaking speed, interruptions or other audio/video cues. This analysis is grounded in transcript content.
+- Do NOT label somebody cheap, rich, desperate, narcissistic, psychotic, dishonest or similar.
+- Distinguish FACT, STRONG INFERENCE, WEAK INFERENCE and UNKNOWN in the wording.
+- Recommendations must be tied to observed evidence and must not pretend certainty.
+- Do not create tasks/events. Every item must be kind="note" or kind="takeaway", status="open", priority="none", confirmed=false.
+
+OUTPUT STRUCTURE
+- Top-level summary: a concise 3-6 sentence sales brief.
+- Produce focused items with tags. Every item must contain "sales-intelligence" plus exactly one primary category tag from:
+  sales:business-context, sales:needs, sales:budget, sales:authority, sales:urgency,
+  sales:price-sensitivity, sales:objection, sales:buying-signal, sales:communication,
+  sales:proposal, sales:next-question, sales:unknown.
+- Use confidence from 0 to 1. High confidence requires direct evidence.
+- sourceSegmentIds must contain only exact segment ids from the transcript. Cite all materially relevant segments for synthesized conclusions.
+- For an UNKNOWN item, sourceSegmentIds may be empty when the point is specifically that the transcript never established it.
+- Preserve money, dates and attribution exactly.
+- Output only JSON matching schema: {json.dumps(schema, ensure_ascii=False)}
+
+Conversation date: {conversation_date.isoformat()}
+Context: {context}
+Transcript quality notes:
+{quality}
+Transcript:
+{transcript}"""
+
+
+def _sales_verification_prompt(transcript: str, draft: Analysis, schema: dict, conversation_date: datetime, context: str) -> str:
+    return f"""Audit and correct this sales-intelligence draft against the transcript. Return complete Analysis JSON only.
+
+VERIFY
+1. Every factual or inferred claim is supported by cited transcript segments, except explicit UNKNOWN items.
+2. Remove invented project budgets. A numeric budget range is allowed only when concrete transcript evidence makes that range defensible.
+3. Never infer personal wealth, income, financial condition, personality, mental health, protected traits, honesty/deception, or hidden motives.
+4. Communication observations must describe repeated observable conversational behavior, not diagnose the person.
+5. Decision authority, urgency, price sensitivity, objections and buying signals must be labeled with appropriate uncertainty.
+6. Recommendations and next questions must follow from cited evidence; do not manufacture pressure tactics.
+7. Every item is note/takeaway, status=open, priority=none, confirmed=false.
+8. Every item has tag sales-intelligence plus exactly one primary sales:* category tag.
+9. Re-check all money, dates, roles and attribution.
+10. If the transcript is insufficient for budget or authority, explicitly preserve UNKNOWN instead of guessing.
+
+Conversation date: {conversation_date.isoformat()}
+Context: {context}
+Schema: {json.dumps(schema, ensure_ascii=False)}
+DRAFT:
+{draft.model_dump_json()}
+TRANSCRIPT:
+{transcript}"""
+
+
+
 async def _ollama(client: httpx.AsyncClient, prompt: str, schema: dict) -> Analysis:
     reasoning = any(token in settings.ollama_model.casefold() for token in ("qwen3", "gpt-oss", "deepseek-r1"))
     last_error = None
@@ -290,6 +378,78 @@ async def _ollama(client: httpx.AsyncClient, prompt: str, schema: dict) -> Analy
             last_error = error
         if not think: break
     raise last_error or RuntimeError("Ollama returned no analysis.")
+
+
+
+def _postprocess_sales(result: Analysis, segments: list[Segment]) -> Analysis:
+    valid_ids = {segment.id for segment in segments if segment.id}
+    processed: list[AnalysisItem] = []
+    for item in result.items:
+        item.kind = "takeaway" if item.kind == "takeaway" else "note"
+        item.status = "open"
+        item.priority = "none"
+        item.confirmed = False
+        item.assignee = None
+        item.startsAt = item.endsAt = item.dueAt = item.reminderAt = None
+        item.sourceSegmentIds = [source for source in _best_source_ids(item, segments) if source in valid_ids]
+
+        category_tags = [tag for tag in item.tags if tag in SALES_CATEGORY_TAGS]
+        primary = category_tags[0] if category_tags else "sales:unknown"
+        other_tags = [tag for tag in item.tags if not tag.startswith("sales:") and tag != "sales-intelligence"]
+        item.tags = ["sales-intelligence", primary, *other_tags]
+
+        if not item.body:
+            item.body = item.title
+        if not item.sourceSegmentIds and primary not in {"sales:unknown", "sales:next-question"}:
+            item.confidence = min(item.confidence, 0.45)
+            item.uncertaintyReason = item.uncertaintyReason or "No direct transcript segment was linked to this conclusion; treat it as low confidence."
+        processed.append(item)
+
+    result.items = processed
+    _dedupe(result)
+    if not result.items:
+        result.items.append(AnalysisItem(
+            kind="note",
+            title="UNKNOWN — insufficient sales evidence",
+            body="The transcript did not contain enough grounded information to produce a reliable sales-intelligence brief.",
+            status="open",
+            priority="none",
+            tags=["sales-intelligence", "sales:unknown"],
+            sourceSegmentIds=[],
+            confidence=1.0,
+            confirmed=False,
+        ))
+    if not result.summary.strip():
+        result.summary = "The transcript did not contain enough grounded information to produce a reliable sales brief."
+    return result
+
+
+async def analyze_sales(segments: list[Segment], conversation_date: datetime, context: str) -> Analysis:
+    if not settings.ollama_url:
+        raise RuntimeError("Ollama is not configured for the transcription worker.")
+    cleaned, quality_notes = sanitize_segments(segments)
+    cleaned = cleaned or segments
+    transcript = "\n".join(
+        f'<segment id="{segment.id or ""}" start_ms="{segment.start_ms}" end_ms="{segment.end_ms}" speaker="{segment.speaker_label}">{segment.text}</segment>'
+        for segment in cleaned
+    )
+    schema = Analysis.model_json_schema()
+    async with httpx.AsyncClient(timeout=900) as client:
+        draft = await _ollama(
+            client,
+            _sales_analysis_prompt(transcript, schema, conversation_date, context, quality_notes),
+            schema,
+        )
+        try:
+            verified = await _ollama(
+                client,
+                _sales_verification_prompt(transcript, draft, schema, conversation_date, context),
+                schema,
+            )
+        except Exception:
+            verified = draft
+    return _postprocess_sales(verified, cleaned)
+
 
 
 def _postprocess(result: Analysis, segments: list[Segment], conversation_date: datetime) -> Analysis:
