@@ -19,12 +19,22 @@ function TaskRow({ item, transcriptionTitle, selected, onSelect, onUpdate, onDel
   const [assignee, setAssignee] = useState(item.assignee || '');
   const [tags, setTags] = useState(item.tags.join(', '));
   const [crmState, setCrmState] = useState<ActionState>('idle');
+  const [statusBusy, setStatusBusy] = useState(false);
   const save = async () => {
     if (!title.trim()) return;
     await onUpdate({ title: title.trim(), assignee: assignee.trim() || undefined, tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean) });
     setEditing(false);
   };
   const cancel = () => { setTitle(item.title); setAssignee(item.assignee || ''); setTags(item.tags.join(', ')); setEditing(false); };
+  const toggleTaskStatus = async () => {
+    if (statusBusy) return;
+    setStatusBusy(true);
+    try {
+      await onUpdate({ status: item.status === 'completed' ? 'open' : 'completed', confirmed: true });
+    } finally {
+      setStatusBusy(false);
+    }
+  };
   const sendToCrm = async () => {
     if (item.status === 'completed' || item.status === 'dismissed') return;
     setCrmState('loading');
@@ -37,7 +47,7 @@ function TaskRow({ item, transcriptionTitle, selected, onSelect, onUpdate, onDel
 
   return <div className={`task-row ${item.status === 'completed' ? 'is-completed' : ''}`}>
     <input className="bulk-checkbox" type="checkbox" checked={selected} disabled={item.status === 'completed' || item.status === 'dismissed'} onChange={(event) => onSelect(event.target.checked)} aria-label={`Select ${item.title}`} />
-    <button className={`task-checkbox ${item.status === 'completed' ? 'checked' : ''}`} onClick={() => void onUpdate({ status: item.status === 'completed' ? 'open' : 'completed', confirmed: true })} aria-label={item.status === 'completed' ? t('reopen') : t('complete')}>{item.status === 'completed' && <Check size={15} />}</button>
+    <button className={`task-checkbox ${item.status === 'completed' ? 'checked' : ''}`} disabled={statusBusy} onClick={() => void toggleTaskStatus()} aria-label={item.status === 'completed' ? t('reopen') : t('complete')}>{statusBusy ? <LoaderCircle className="spin" size={13} /> : item.status === 'completed' && <Check size={15} />}</button>
     <div className="task-content">
       {editing ? <div className="task-edit-grid"><input value={title} onChange={(event) => setTitle(event.target.value)} aria-label="Task title" dir="auto" /><input value={assignee} onChange={(event) => setAssignee(event.target.value)} placeholder={t('assignee')} aria-label={t('assignee')} /><input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="tag, tag" aria-label={t('tags')} /></div> : <><strong dir="auto">{item.title}</strong><div className="item-meta"><span>{transcriptionTitle}</span>{item.assignee && <span>{item.assignee}</span>}{item.tags.map((tag) => <span className="tag" key={tag}>{tag}</span>)}{item.status === 'needs_review' && <StatusBadge status="needs_review" />}</div></>}
     </div>
@@ -108,7 +118,7 @@ export function TasksPage() {
     if (!selectedReview.length) return;
     beginBulk('accept');
     try {
-      await Promise.all(selectedReview.map((item) => store.updateItem(item.id, { status: 'open', confirmed: true })));
+      await store.updateItems(selectedReview.map((item) => ({ id: item.id, patch: { status: 'open', confirmed: true } })));
       setBulkSuccess(`${selectedReview.length} selected task${selectedReview.length === 1 ? '' : 's'} accepted.`);
     } catch (reason) { setBulkError(reason instanceof Error ? reason.message : 'Could not accept the selected tasks.'); }
     finally { setBulkAction(null); }
@@ -118,7 +128,7 @@ export function TasksPage() {
     if (!chosen.length) return;
     beginBulk('complete');
     try {
-      await Promise.all(chosen.map((item) => store.updateItem(item.id, { status: 'completed', confirmed: true })));
+      await store.updateItems(chosen.map((item) => ({ id: item.id, patch: { status: 'completed', confirmed: true } })));
       setSelected(new Set());
       setBulkSuccess(`${chosen.length} selected task${chosen.length === 1 ? '' : 's'} marked as done.`);
     } catch (reason) {
