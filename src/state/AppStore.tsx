@@ -37,6 +37,7 @@ interface AppStoreValue {
   updateTranscription: (id: string, patch: Partial<Transcription>) => Promise<void>;
   updateSegment: (id: string, text: string, speakerLabel?: string) => Promise<void>;
   updateItem: (id: string, patch: Partial<ExtractedItem>) => Promise<void>;
+  updateItems: (updates: Array<{ id: string; patch: Partial<ExtractedItem> }>) => Promise<void>;
   deleteItem: (id: string) => Promise<void>;
   deleteItems: (ids: string[]) => Promise<void>;
   addItem: (transcriptionId: string, item: Partial<ExtractedItem> & Pick<ExtractedItem, 'kind' | 'title'>) => Promise<void>;
@@ -311,21 +312,50 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     await db.segments.update(id, { text, speakerLabel, edited: true });
     await reload();
   }, [reload]);
+  const updateItems = useCallback(async (updates: Array<{ id: string; patch: Partial<ExtractedItem> }>) => {
+    if (!updates.length) return;
+
+    const patchesById = new Map<string, Partial<ExtractedItem>>();
+    for (const update of updates) {
+      patchesById.set(update.id, { ...(patchesById.get(update.id) || {}), ...update.patch });
+    }
+
+    const ids = [...patchesById.keys()];
+    const timestamp = new Date().toISOString();
+    const persisted = await db.transaction('rw', db.items, async () => {
+      const existing = await db.items.bulkGet(ids);
+      const missing = ids.filter((_, index) => !existing[index]);
+      if (missing.length) throw new Error(`Could not update ${missing.length} task${missing.length === 1 ? '' : 's'} because they no longer exist.`);
+
+      const nextItems = existing.map((item, index) => normalizeStoredItem({
+        ...item!,
+        ...patchesById.get(ids[index]),
+        updatedAt: timestamp
+      }));
+      await db.items.bulkPut(nextItems);
+      return nextItems;
+    });
+
+    const persistedById = new Map(persisted.map((item) => [item.id, item]));
+    setItems((current) => current.map((item) => persistedById.get(item.id) || item));
+  }, []);
+
   const updateItem = useCallback(async (id: string, patch: Partial<ExtractedItem>) => {
-    await db.items.update(id, { ...patch, updatedAt: new Date().toISOString() });
-    await reload();
-  }, [reload]);
+    await updateItems([{ id, patch }]);
+  }, [updateItems]);
+
   const deleteItem = useCallback(async (id: string) => {
     await db.items.delete(id);
-    await reload();
+    setItems((current) => current.filter((item) => item.id !== id));
     showToast('Item deleted.');
-  }, [reload, showToast]);
+  }, [showToast]);
   const deleteItems = useCallback(async (ids: string[]) => {
     if (!ids.length) return;
     await db.items.bulkDelete(ids);
-    await reload();
+    const idSet = new Set(ids);
+    setItems((current) => current.filter((item) => !idSet.has(item.id)));
     showToast(`${ids.length} items deleted.`);
-  }, [reload, showToast]);
+  }, [showToast]);
   const addItem = useCallback(async (transcriptionId: string, item: Partial<ExtractedItem> & Pick<ExtractedItem, 'kind' | 'title'>) => {
     const now = new Date().toISOString();
     await db.items.add({
@@ -429,11 +459,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AppStoreValue>(() => ({
     loading, error, online, workerReady, settings, transcriptions, segments, items, notes, toast,
     tSegments, tItems, tNotes, updateSettings, createManual, processMedia, retryTranscription,
-    updateTranscription, updateSegment, updateItem, deleteItem, deleteItems, addItem, importItems, addNote, deleteTranscription,
+    updateTranscription, updateSegment, updateItem, updateItems, deleteItem, deleteItems, addItem, importItems, addNote, deleteTranscription,
     runAnalysis, runOllamaAnalysis, runSalesAnalysis, loadDemo, clearData, sync, refreshWorker, showToast
   }), [loading, error, online, workerReady, settings, transcriptions, segments, items, notes, toast,
     tSegments, tItems, tNotes, updateSettings, createManual, processMedia, retryTranscription,
-    updateTranscription, updateSegment, updateItem, deleteItem, deleteItems, addItem, importItems, addNote, deleteTranscription,
+    updateTranscription, updateSegment, updateItem, updateItems, deleteItem, deleteItems, addItem, importItems, addNote, deleteTranscription,
     runAnalysis, runOllamaAnalysis, runSalesAnalysis, loadDemo, clearData, sync, refreshWorker, showToast]);
 
   return <AppStoreContext.Provider value={value}>{children}</AppStoreContext.Provider>;
