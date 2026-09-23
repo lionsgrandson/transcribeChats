@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.analysis import ENGLISH_TASK_RE, _best_source_ids, _ensure_meaningful_notes, _merge_rule_items, _remove_action_only_notes, analyze, analyze_rules  # noqa: E402
+from app.analysis import ENGLISH_TASK_RE, _best_source_ids, _ensure_meaningful_notes, _merge_rule_items, _remove_action_only_notes, analyze, analyze_rules, analyze_sales  # noqa: E402
 from app.schemas import Analysis, AnalysisItem, Segment  # noqa: E402
 from app.settings import settings  # noqa: E402
 
@@ -48,6 +48,23 @@ class FakeDatedEventClient(FakeOllamaClient):
         FakeOllamaClient.payload = json
         FakeOllamaClient.payloads.append(json)
         return FakeDatedEventResponse()
+
+
+class FakeSalesResponse(FakeOllamaResponse):
+    def json(self):
+        return {
+            "message": {
+                "content": '{"summary":"Client is evaluating a phased implementation.","items":[{"kind":"task","title":"Budget — STRONG INFERENCE: project spend is constrained","body":"The client discussed a ₪20,000 first phase and asked whether implementation could be split.","tags":["sales:budget"],"sourceSegmentIds":["s1"],"confidence":0.82}]}'
+            },
+            "done_reason": "stop",
+        }
+
+
+class FakeSalesClient(FakeOllamaClient):
+    async def post(self, url, json):
+        FakeOllamaClient.payload = json
+        FakeOllamaClient.payloads.append(json)
+        return FakeSalesResponse()
 
 
 class AnalysisTests(unittest.TestCase):
@@ -174,6 +191,19 @@ class OllamaAnalysisTests(unittest.IsolatedAsyncioTestCase):
             result = await analyze(segments, datetime(2026, 7, 11, tzinfo=timezone.utc), "")
         self.assertEqual(result.items[0].kind, "event")
         self.assertEqual(result.items[0].startsAt, "2026-07-12T14:00:00")
+
+
+    async def test_sales_analysis_keeps_project_budget_grounded_and_never_creates_tasks(self):
+        segments = [Segment(id="s1", sequence_no=0, start_ms=0, end_ms=1000, text="Phase one is ₪20,000. Can we split the rest into a later phase?")]
+        with patch.object(settings, "ollama_url", "http://ollama"), patch.object(settings, "ollama_model", "qwen3.5:9b"), patch("app.analysis.httpx.AsyncClient", FakeSalesClient):
+            result = await analyze_sales(segments, datetime(2026, 9, 23, tzinfo=timezone.utc), "Client sales meeting")
+        self.assertEqual(len(FakeOllamaClient.payloads), 2)
+        self.assertEqual(result.items[0].kind, "note")
+        self.assertIn("sales-intelligence", result.items[0].tags)
+        self.assertIn("sales:budget", result.items[0].tags)
+        self.assertEqual(result.items[0].sourceSegmentIds, ["s1"])
+        self.assertIn("Never invent a number from tone", FakeOllamaClient.payloads[0]["messages"][0]["content"])
+        self.assertIn("Audit and correct this sales-intelligence draft", FakeOllamaClient.payloads[1]["messages"][0]["content"])
 
 
 if __name__ == "__main__":
