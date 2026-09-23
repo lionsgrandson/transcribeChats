@@ -4,9 +4,9 @@ TranscribeChats is an installable cross-platform PWA for bilingual Hebrew/Englis
 
 Project status: functional MVP implementation.
 
-Application version: `0.9.1`
+Application version: `0.12.0`
 
-Last updated: 2026-07-13
+Last updated: 2026-09-23
 
 ## Start here
 
@@ -21,6 +21,7 @@ For hosted/local synchronization, authentication, migrations, storage, and every
 - A Dockerized Python worker using `faster-whisper`, FFmpeg, optional `pyannote.audio`, and optional Ollama analysis.
 - Dexie/IndexedDB for offline transcripts, media, tasks, events, notes, and preferences.
 - A provider-neutral analysis interface supporting a local LLM first and an optional hosted model later.
+- Evidence-backed Sales Intelligence analysis for client meetings: project budget signals, authority, urgency, price sensitivity, objections, buying signals, observable communication patterns, proposal framing, and next questions. It explicitly avoids personality/mental-health diagnosis and personal-wealth inference.
 - One-click transfer of extracted tasks into CodeCrafter CRM through a browser-only URL fragment; the CRM asks for the destination project and rejects duplicate source IDs.
 
 The repository originally recommended Flutter. The implementation uses the PWA option explicitly allowed by the requirements because Flutter/Dart are not installed in the delivery environment; this route produces a buildable and testable application now and avoids maintaining separate mobile/desktop UI stacks.
@@ -62,6 +63,8 @@ The application works without the worker for manual text, task/event extraction,
 Media file size is not a reliable estimate of transcription time; recording duration matters much more. A 27 MB video is not unusually large, but it can still contain a long recording. Version 0.3.0 runs faster-whisper on NVIDIA CUDA by default and uses GPU VRAM instead of placing the model workload on the CPU. FFmpeg decoding and application housekeeping can still use some CPU and system RAM.
 
 While the local engine runs, the progress percentage between upload and finalization is explicitly marked as an estimate and the app shows elapsed time. Ollama does not perform speech-to-text. It runs only when you press **Analyze with Ollama** after Whisper has produced a transcript, and the Whisper model is released first to avoid both models competing for GPU memory.
+
+After a transcript is ready, press **Sales intelligence** for a separate two-pass Ollama analysis. The report is stored alongside the meeting with evidence links and confidence levels, without replacing the normal summary/tasks/notes. Budget estimates are limited to project purchasing evidence stated in the transcript; insufficient evidence is reported as unknown rather than guessed.
 
 Automatic extraction is deliberately conservative. It creates review suggestions only for explicit commitments such as “Dana will send the file” and explicit meeting proposals such as “Let’s have a meeting.” An undated meeting stays in review and does not appear on the calendar until you add a date/time and accept it. Advice, predictions, and ordinary conversation are not converted to tasks. Tasks and events support individual editing/deletion plus checkbox-based multi-select deletion.
 
@@ -328,7 +331,7 @@ Once application scaffolding creates `package.json` and `package-lock.json`, eve
 - Minor: backward-compatible features.
 - Major: breaking schema, API, sync, or user-workflow changes.
 
-The current `package.json` and `package-lock.json` both track application version `0.11.0`.
+The current `package.json` and `package-lock.json` both track application version `0.12.0`.
 
 ## Select a CRM
 
