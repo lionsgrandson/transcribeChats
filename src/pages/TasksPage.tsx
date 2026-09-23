@@ -6,7 +6,7 @@ import type { ExtractedItem, Priority } from '../domain/types';
 import { useTranslation } from '../i18n/useTranslation';
 import { sendTasksToCrm, toCrmTask } from '../services/crmTransfer';
 import { exportAllTasksCsv } from '../services/exports';
-import { copyTaskToChatGpt } from '../services/taskChatGpt';
+import { copyTaskToChatGpt, copyTasksToChatGpt } from '../services/taskChatGpt';
 import { useAppStore } from '../state/AppStore';
 
 type ActionState = 'idle' | 'loading' | 'success' | 'failure';
@@ -65,7 +65,7 @@ export function TasksPage() {
   const [newTitle, setNewTitle] = useState('');
   const [newTranscription, setNewTranscription] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [bulkAction, setBulkAction] = useState<'accept' | 'send' | 'delete' | null>(null);
+  const [bulkAction, setBulkAction] = useState<'accept' | 'chatgpt' | 'send' | 'delete' | null>(null);
   const [bulkError, setBulkError] = useState('');
   const [bulkSuccess, setBulkSuccess] = useState('');
   const [exportState, setExportState] = useState<ActionState>('idle');
@@ -94,7 +94,7 @@ export function TasksPage() {
   const toggleSelected = (id: string, value: boolean) => setSelected((current) => {
     const next = new Set(current); if (value) next.add(id); else next.delete(id); return next;
   });
-  const beginBulk = (action: 'accept' | 'send' | 'delete') => { setBulkAction(action); setBulkError(''); setBulkSuccess(''); };
+  const beginBulk = (action: 'accept' | 'chatgpt' | 'send' | 'delete') => { setBulkAction(action); setBulkError(''); setBulkSuccess(''); };
   const deleteSelected = async () => {
     if (!selected.size || !confirm(`Delete ${selected.size} selected tasks?`)) return;
     beginBulk('delete');
@@ -124,6 +124,21 @@ export function TasksPage() {
     } catch (reason) { setBulkError(reason instanceof Error ? reason.message : 'Could not sync the selected CRM.'); }
     finally { setBulkAction(null); }
   };
+  const sendSelectedToChatGpt = async () => {
+    const chosen = tasks.filter((item) => selected.has(item.id) && item.status !== 'completed' && item.status !== 'dismissed');
+    if (!chosen.length) return;
+    beginBulk('chatgpt');
+    try {
+      const entries = chosen.map((item) => {
+        const transcription = store.transcriptions.find((value) => value.id === item.transcriptionId);
+        if (!transcription) throw new Error(`The source transcription for “${item.title}” could not be found.`);
+        return { item, transcription, segments: store.tSegments(item.transcriptionId) };
+      });
+      await copyTasksToChatGpt(entries);
+      setBulkSuccess(`${entries.length} selected task${entries.length === 1 ? '' : 's'} copied. Paste them into the ChatGPT tab that just opened.`);
+    } catch (reason) { setBulkError(reason instanceof Error ? reason.message : 'Could not open the selected tasks in ChatGPT.'); }
+    finally { setBulkAction(null); }
+  };
   const openTaskInChatGpt = async (item: ExtractedItem) => {
     const transcription = store.transcriptions.find((value) => value.id === item.transcriptionId);
     if (!transcription) return store.showToast('The source transcription could not be found.');
@@ -147,7 +162,7 @@ export function TasksPage() {
     {showAdd && <Card className="quick-add"><Field label={t('title')}><input autoFocus value={newTitle} onChange={(event) => setNewTitle(event.target.value)} /></Field><Field label={t('source')}><select value={newTranscription} onChange={(event) => setNewTranscription(event.target.value)}><option value="">{t('selectTranscription')}</option>{store.transcriptions.map((value) => <option value={value.id} key={value.id}>{value.title}</option>)}</select></Field><div className="form-actions"><Button variant="ghost" onClick={() => setShowAdd(false)}>{t('cancel')}</Button><Button disabled={!newTitle.trim() || !newTranscription} onClick={() => void add()}>{t('save')}</Button></div></Card>}
     <Card>
       <div className="filter-bar"><div className="search-field"><Search size={17} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search task or transcription" aria-label="Search task or transcription" /></div><div className="filter-tabs" role="group" aria-label="Task status filter">{['all', 'review', 'open', 'completed'].map((value) => <button type="button" aria-pressed={filter === value} className={filter === value ? 'active' : ''} onClick={() => setFilter(value)} key={value}>{value === 'review' ? t('needsReview') : t(value as 'all' | 'open' | 'completed')}</button>)}</div><label className="select-with-icon"><SlidersHorizontal size={16} /><select value={transcriptionFilter} onChange={(event) => setTranscriptionFilter(event.target.value)} aria-label="Filter by transcription"><option value="all">All transcriptions</option>{store.transcriptions.map((transcription) => <option key={transcription.id} value={transcription.id}>{transcription.title}</option>)}</select></label><label className="select-with-icon"><SlidersHorizontal size={16} /><select value={priority} onChange={(event) => setPriority(event.target.value)} aria-label={t('allPriorities')}><option value="all">{t('allPriorities')}</option><option value="urgent">{t('urgent')}</option><option value="high">{t('high')}</option><option value="medium">{t('medium')}</option><option value="low">{t('low')}</option></select></label></div>
-      {filtered.length > 0 && <div className="bulk-toolbar"><label><input type="checkbox" checked={selectableFiltered.length > 0 && selectableFiltered.every((item) => selected.has(item.id))} disabled={!selectableFiltered.length} onChange={(event) => setSelected((current) => { const next = new Set(current); selectableFiltered.forEach((item) => event.target.checked ? next.add(item.id) : next.delete(item.id)); return next; })} /> Select all shown</label><span>{selected.size} selected</span><Button variant="secondary" disabled={!selectedReview.length || bulkAction !== null} onClick={() => void acceptSelected()}>{bulkAction === 'accept' ? <LoaderCircle className="spin" size={15} /> : <CheckCheck size={15} />}Accept selected{selectedReview.length ? ` (${selectedReview.length})` : ''}</Button><Button disabled={!selected.size || bulkAction !== null} onClick={() => void sendSelectedToCrm()}>{bulkAction === 'send' ? <LoaderCircle className="spin" size={15} /> : <ExternalLink size={15} />}Send selected to CRM</Button><Button variant="danger" disabled={!selected.size || bulkAction !== null} onClick={() => void deleteSelected()}>{bulkAction === 'delete' ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}Delete selected</Button></div>}
+      {filtered.length > 0 && <div className="bulk-toolbar"><label><input type="checkbox" checked={selectableFiltered.length > 0 && selectableFiltered.every((item) => selected.has(item.id))} disabled={!selectableFiltered.length} onChange={(event) => setSelected((current) => { const next = new Set(current); selectableFiltered.forEach((item) => event.target.checked ? next.add(item.id) : next.delete(item.id)); return next; })} /> Select all shown</label><span>{selected.size} selected</span><Button variant="secondary" disabled={!selectedReview.length || bulkAction !== null} onClick={() => void acceptSelected()}>{bulkAction === 'accept' ? <LoaderCircle className="spin" size={15} /> : <CheckCheck size={15} />}Accept selected{selectedReview.length ? ` (${selectedReview.length})` : ''}</Button><Button variant="secondary" disabled={!selected.size || bulkAction !== null} onClick={() => void sendSelectedToChatGpt()}>{bulkAction === 'chatgpt' ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}Send selected to ChatGPT</Button><Button disabled={!selected.size || bulkAction !== null} onClick={() => void sendSelectedToCrm()}>{bulkAction === 'send' ? <LoaderCircle className="spin" size={15} /> : <ExternalLink size={15} />}Send selected to CRM</Button><Button variant="danger" disabled={!selected.size || bulkAction !== null} onClick={() => void deleteSelected()}>{bulkAction === 'delete' ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}Delete selected</Button></div>}
       {bulkError && <div className="banner banner-error" role="alert">{bulkError}</div>}
       {bulkSuccess && <div className="banner banner-success" role="status">{bulkSuccess}</div>}
       {filtered.length === 0 ? <EmptyState title={t('noTasks')} body={t('noTasksBody')} icon={<Filter />} /> : <div className="task-groups">{groups.overdue.length > 0 && <section><h2 className="group-title overdue"><CalendarClock size={17} />{t('overdue')} <span>{groups.overdue.length}</span></h2>{groups.overdue.map(renderTask)}</section>}<section><h2 className="group-title">{filter === 'completed' ? t('completed') : t('upcoming')} <span>{groups.upcoming.length}</span></h2>{groups.upcoming.map(renderTask)}</section></div>}

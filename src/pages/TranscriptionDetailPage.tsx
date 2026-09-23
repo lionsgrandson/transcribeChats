@@ -9,7 +9,7 @@ import type { AnalysisResult, ExtractedItem, Transcription, TranscriptSegment } 
 import { useTranslation } from '../i18n/useTranslation';
 import { formatDate, formatDuration, formatTimestamp, inferDirection } from '../lib/format';
 import { exportCsv, exportText, printPdf } from '../services/exports';
-import { copyTaskToChatGpt } from '../services/taskChatGpt';
+import { copyTaskToChatGpt, copyTasksToChatGpt } from '../services/taskChatGpt';
 import { sendTasksToCrm, sendTranscriptionToCrm, toCrmTask, type CrmDestination } from '../services/crmTransfer';
 import { useAppStore } from '../state/AppStore';
 
@@ -119,6 +119,7 @@ export function TranscriptionDetailPage() {
   const [salesResult, setSalesResult] = useState<AnalysisResult>();
   const [crmWorkspaceState, setCrmWorkspaceState] = useState<CrmTransferState>('idle');
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(() => new Set());
+  const [chatGptBulkBusy, setChatGptBulkBusy] = useState(false);
   const [crmTransferMode, setCrmTransferMode] = useState<'all' | 'selected'>('all');
   const playerRef = useRef<HTMLAudioElement>(null);
   const tab = params.get('tab') || 'transcript';
@@ -165,6 +166,19 @@ export function TranscriptionDetailPage() {
       store.showToast('Task copied. Paste it into the ChatGPT tab that just opened.');
     } catch (reason) {
       store.showToast(reason instanceof Error ? reason.message : 'Could not open this task in ChatGPT.');
+    }
+  };
+  const openSelectedTasksInChatGpt = async () => {
+    const currentSelectedTasks = items.filter((item) => item.kind === 'task' && selectedTaskIds.has(item.id) && item.status !== 'completed' && item.status !== 'dismissed');
+    if (!currentSelectedTasks.length) return store.showToast('Choose at least one unfinished task to send to ChatGPT.');
+    setChatGptBulkBusy(true);
+    try {
+      await copyTasksToChatGpt(currentSelectedTasks.map((item) => ({ item, transcription, segments })));
+      store.showToast(`${currentSelectedTasks.length} selected task${currentSelectedTasks.length === 1 ? '' : 's'} copied. Paste them into the ChatGPT tab that just opened.`);
+    } catch (reason) {
+      store.showToast(reason instanceof Error ? reason.message : 'Could not open the selected tasks in ChatGPT.');
+    } finally {
+      setChatGptBulkBusy(false);
     }
   };
   const playFrom = (startMs: number) => {
@@ -272,6 +286,7 @@ export function TranscriptionDetailPage() {
         {selectableTasks.length > 0 && <div className="bulk-toolbar">
           <label><input type="checkbox" checked={allSelectableTasksSelected} onChange={(event) => setSelectedTaskIds(event.target.checked ? new Set(selectableTasks.map((item) => item.id)) : new Set())} /> Select all available tasks</label>
           <span>{selectedTasks.length} selected</span>
+          <Button variant="secondary" disabled={!selectedTasks.length || chatGptBulkBusy} onClick={() => void openSelectedTasksInChatGpt()}>{chatGptBulkBusy ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}Send selected to ChatGPT{selectedTasks.length ? ` (${selectedTasks.length})` : ''}</Button>
           <Button disabled={!selectedTasks.length || crmWorkspaceState === 'loading'} onClick={() => { setCrmTransferMode('selected'); setCrmPickerOpen(true); }}><ExternalLink size={15} />Send selected to CRM{selectedTasks.length ? ` (${selectedTasks.length})` : ''}</Button>
         </div>}
         {items.filter((item) => item.kind === 'task' || item.kind === 'event').length ? <div className="item-list">{items.filter((item) => item.kind === 'task' || item.kind === 'event').map((item) => <ItemRow key={item.id} item={item} transcriptionTitle={transcription.title} selected={selectedTaskIds.has(item.id)} onSelect={(value) => toggleSelectedTask(item.id, value)} onUpdate={(patch) => updateDetailItem(item.id, patch)} onDelete={async () => { toggleSelectedTask(item.id, false); await store.deleteItem(item.id); }} onSource={showSource} onPlaySource={playSource} onOpenChatGpt={() => openTaskInChatGpt(item)} />)}</div> : <EmptyState title={t('noTasks')} body="No explicit commitments, direct requests, or planned timeline events were found." />}

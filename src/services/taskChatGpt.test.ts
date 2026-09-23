@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ExtractedItem, TranscriptSegment, Transcription } from '../domain/types';
-import { buildTaskChatGptPrompt } from './taskChatGpt';
+import { buildTaskChatGptPrompt, buildTasksChatGptPrompt } from './taskChatGpt';
 
 const transcription: Transcription = {
   id: 'transcription-1',
@@ -40,6 +40,28 @@ const segments: TranscriptSegment[] = [
   { id: 'segment-4', transcriptionId: transcription.id, sequenceNo: 3, speakerLabel: 'Client', startMs: 30000, endMs: 40000, text: 'Unrelated discussion.', originalText: 'Unrelated discussion.', language: 'en', edited: false },
 ];
 
+const secondTranscription: Transcription = {
+  ...transcription,
+  id: 'transcription-2',
+  title: 'CRM follow-up',
+  recordedAt: '2026-09-24T11:00:00.000Z',
+  summary: 'The CRM task board needs a drag-and-drop fix.',
+};
+
+const secondTask: ExtractedItem = {
+  ...task,
+  id: 'task-2',
+  transcriptionId: secondTranscription.id,
+  title: 'Fix CRM board dragging',
+  body: 'Allow dragging into short columns.',
+  sourceSegmentIds: ['segment-5'],
+};
+
+const secondSegments: TranscriptSegment[] = [
+  { id: 'segment-5', transcriptionId: secondTranscription.id, sequenceNo: 0, speakerLabel: 'Moshe', startMs: 0, endMs: 10000, text: 'Fix dragging tasks into shorter columns.', originalText: 'Fix dragging tasks into shorter columns.', language: 'en', edited: false },
+  { id: 'segment-6', transcriptionId: secondTranscription.id, sequenceNo: 1, speakerLabel: 'Client', startMs: 10000, endMs: 20000, text: 'That is the exact issue.', originalText: 'That is the exact issue.', language: 'en', edited: false },
+];
+
 describe('task ChatGPT handoff', () => {
   it('builds a focused prompt with task metadata and nearby evidence', () => {
     const prompt = buildTaskChatGptPrompt(task, transcription, segments);
@@ -56,5 +78,26 @@ describe('task ChatGPT handoff', () => {
     const prompt = buildTaskChatGptPrompt({ ...task, sourceSegmentIds: [] }, transcription, segments);
     expect(prompt).toContain('No linked source transcript segments are available for this task.');
     expect(prompt).toContain('Summary: The client wants a revised proposal');
+  });
+
+  it('combines selected tasks while preserving each task source and transcription', () => {
+    const prompt = buildTasksChatGptPrompt([
+      { item: task, transcription, segments },
+      { item: secondTask, transcription: secondTranscription, segments: secondSegments },
+    ]);
+    expect(prompt).toContain('I selected 2 specific tasks');
+    expect(prompt).toContain('SELECTED TASK 1');
+    expect(prompt).toContain('Task: Prepare revised proposal');
+    expect(prompt).toContain('Title: Website discovery');
+    expect(prompt).toContain('[SOURCE · 0:10 · Moshe] I will send a revised proposal by Friday.');
+    expect(prompt).toContain('SELECTED TASK 2');
+    expect(prompt).toContain('Task: Fix CRM board dragging');
+    expect(prompt).toContain('Title: CRM follow-up');
+    expect(prompt).toContain('[SOURCE · 0:00 · Moshe] Fix dragging tasks into shorter columns.');
+    expect(prompt).not.toContain('Unrelated discussion.');
+  });
+
+  it('rejects an empty multi-task handoff', () => {
+    expect(() => buildTasksChatGptPrompt([])).toThrow('Choose at least one task');
   });
 });
