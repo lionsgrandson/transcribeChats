@@ -119,6 +119,7 @@ export function TranscriptionDetailPage() {
   const [salesResult, setSalesResult] = useState<AnalysisResult>();
   const [crmWorkspaceState, setCrmWorkspaceState] = useState<CrmTransferState>('idle');
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(() => new Set());
+  const [completeBulkBusy, setCompleteBulkBusy] = useState(false);
   const [chatGptBulkBusy, setChatGptBulkBusy] = useState(false);
   const [crmTransferMode, setCrmTransferMode] = useState<'all' | 'selected'>('all');
   const playerRef = useRef<HTMLAudioElement>(null);
@@ -159,6 +160,20 @@ export function TranscriptionDetailPage() {
   const updateDetailItem = async (itemId: string, patch: Partial<ExtractedItem>) => {
     if (patch.status === 'completed' || patch.status === 'dismissed') toggleSelectedTask(itemId, false);
     await store.updateItem(itemId, patch);
+  };
+  const completeSelectedTasks = async () => {
+    const currentSelectedTasks = items.filter((item) => item.kind === 'task' && selectedTaskIds.has(item.id) && item.status !== 'completed' && item.status !== 'dismissed');
+    if (!currentSelectedTasks.length) return store.showToast('Choose at least one unfinished task to mark as done.');
+    setCompleteBulkBusy(true);
+    try {
+      await Promise.all(currentSelectedTasks.map((item) => store.updateItem(item.id, { status: 'completed', confirmed: true })));
+      setSelectedTaskIds(new Set());
+      store.showToast(`${currentSelectedTasks.length} task${currentSelectedTasks.length === 1 ? '' : 's'} marked as done.`);
+    } catch (reason) {
+      store.showToast(reason instanceof Error ? reason.message : 'Could not mark the selected tasks as done.');
+    } finally {
+      setCompleteBulkBusy(false);
+    }
   };
   const openTaskInChatGpt = async (item: ExtractedItem) => {
     try {
@@ -286,6 +301,7 @@ export function TranscriptionDetailPage() {
         {selectableTasks.length > 0 && <div className="bulk-toolbar">
           <label><input type="checkbox" checked={allSelectableTasksSelected} onChange={(event) => setSelectedTaskIds(event.target.checked ? new Set(selectableTasks.map((item) => item.id)) : new Set())} /> Select all available tasks</label>
           <span>{selectedTasks.length} selected</span>
+          <Button variant="secondary" disabled={!selectedTasks.length || completeBulkBusy} onClick={() => void completeSelectedTasks()}>{completeBulkBusy ? <LoaderCircle className="spin" size={15} /> : <CheckCircle2 size={15} />}Mark selected done{selectedTasks.length ? ` (${selectedTasks.length})` : ''}</Button>
           <Button variant="secondary" disabled={!selectedTasks.length || chatGptBulkBusy} onClick={() => void openSelectedTasksInChatGpt()}>{chatGptBulkBusy ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}Send selected to ChatGPT{selectedTasks.length ? ` (${selectedTasks.length})` : ''}</Button>
           <Button disabled={!selectedTasks.length || crmWorkspaceState === 'loading'} onClick={() => { setCrmTransferMode('selected'); setCrmPickerOpen(true); }}><ExternalLink size={15} />Send selected to CRM{selectedTasks.length ? ` (${selectedTasks.length})` : ''}</Button>
         </div>}
