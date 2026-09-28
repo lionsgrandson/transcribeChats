@@ -365,6 +365,53 @@ TRANSCRIPT:
 
 
 
+async def _gemini(client: httpx.AsyncClient, prompt: str, schema: dict) -> Analysis:
+    if not settings.gemini_api_key:
+        raise RuntimeError("Gemini is not configured.")
+
+    response = await client.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent",
+        headers={"x-goog-api-key": settings.gemini_api_key, "Content-Type": "application/json"},
+        json={
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0,
+                "responseMimeType": "application/json",
+                "responseJsonSchema": schema,
+            },
+        },
+    )
+    response.raise_for_status()
+    payload = response.json()
+    candidates = payload.get("candidates") or []
+    parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
+    content = "".join(part.get("text", "") for part in parts if isinstance(part, dict)).strip()
+    if not content:
+        raise RuntimeError("Gemini returned no final analysis.")
+    return Analysis.model_validate_json(content)
+
+
+async def _ai(client: httpx.AsyncClient, prompt: str, schema: dict) -> Analysis:
+    gemini_error = None
+    if settings.gemini_api_key:
+        try:
+            return await _gemini(client, prompt, schema)
+        except Exception as error:
+            gemini_error = error
+
+    if settings.ollama_url:
+        try:
+            return await _ollama(client, prompt, schema)
+        except Exception as ollama_error:
+            if gemini_error:
+                raise RuntimeError(f"Gemini failed ({gemini_error}); Ollama fallback also failed ({ollama_error}).") from ollama_error
+            raise
+
+    if gemini_error:
+        raise RuntimeError(f"Gemini analysis failed and Ollama fallback is not configured: {gemini_error}") from gemini_error
+    raise RuntimeError("Neither Gemini nor Ollama is configured for the transcription worker.")
+
+
 async def _ollama(client: httpx.AsyncClient, prompt: str, schema: dict) -> Analysis:
     reasoning = any(token in settings.ollama_model.casefold() for token in ("qwen3", "gpt-oss", "deepseek-r1"))
     last_error = None
@@ -425,8 +472,8 @@ def _postprocess_sales(result: Analysis, segments: list[Segment]) -> Analysis:
 
 
 async def analyze_sales(segments: list[Segment], conversation_date: datetime, context: str) -> Analysis:
-    if not settings.ollama_url:
-        raise RuntimeError("Ollama is not configured for the transcription worker.")
+    if not settings.gemini_api_key and not settings.ollama_url:
+        raise RuntimeError("Neither Gemini nor Ollama is configured for the transcription worker.")
     cleaned, quality_notes = sanitize_segments(segments)
     cleaned = cleaned or segments
     transcript = "\n".join(
@@ -435,13 +482,13 @@ async def analyze_sales(segments: list[Segment], conversation_date: datetime, co
     )
     schema = Analysis.model_json_schema()
     async with httpx.AsyncClient(timeout=900) as client:
-        draft = await _ollama(
+        draft = await _ai(
             client,
             _sales_analysis_prompt(transcript, schema, conversation_date, context, quality_notes),
             schema,
         )
         try:
-            verified = await _ollama(
+            verified = await _ai(
                 client,
                 _sales_verification_prompt(transcript, draft, schema, conversation_date, context),
                 schema,
@@ -488,15 +535,15 @@ def _postprocess(result: Analysis, segments: list[Segment], conversation_date: d
 
 
 async def analyze(segments: list[Segment], conversation_date: datetime, context: str) -> Analysis:
-    if not settings.ollama_url: raise RuntimeError("Ollama is not configured for the transcription worker.")
+    if not settings.gemini_api_key and not settings.ollama_url: raise RuntimeError("Neither Gemini nor Ollama is configured for the transcription worker.")
     cleaned, quality_notes = sanitize_segments(segments)
     cleaned = cleaned or segments
     transcript = "\n".join(f'<segment id="{s.id or ""}" start_ms="{s.start_ms}" end_ms="{s.end_ms}" speaker="{s.speaker_label}">{s.text}</segment>' for s in cleaned)
     schema = Analysis.model_json_schema()
     async with httpx.AsyncClient(timeout=900) as client:
-        draft = await _ollama(client, _analysis_prompt(transcript, schema, conversation_date, context, quality_notes), schema)
+        draft = await _ai(client, _analysis_prompt(transcript, schema, conversation_date, context, quality_notes), schema)
         try:
-            verified = await _ollama(client, _verification_prompt(transcript, draft, schema, conversation_date, context), schema)
+            verified = await _ai(client, _verification_prompt(transcript, draft, schema, conversation_date, context), schema)
         except Exception:
             verified = draft
     return _postprocess(verified, cleaned, conversation_date)
