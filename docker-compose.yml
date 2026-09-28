@@ -21,6 +21,8 @@ services:
       PYANNOTE_MODEL: ${PYANNOTE_MODEL:-pyannote/speaker-diarization-community-1}
       PYANNOTE_DEVICE: ${PYANNOTE_DEVICE:-cuda}
       PYANNOTE_METRICS_ENABLED: ${PYANNOTE_METRICS_ENABLED:-false}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:30b}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:4173,http://127.0.0.1:4173}
