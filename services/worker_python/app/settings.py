@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     pyannote_device: str = "cuda"
     pyannote_metrics_enabled: bool = False
 
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-3.8-flash"
+
     ollama_url: str | None = None
     # start-all.mjs can automatically choose a larger model on machines with
     # enough memory. This remains the standalone Docker/default fallback.
