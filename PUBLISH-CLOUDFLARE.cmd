@@ -15,6 +15,33 @@ echo NOTE: The browser UI can be published to Cloudflare Pages.
 echo Whisper and Ollama remain local on your PC because they require
 echo your local GPU/RAM. Use START-LEARNING.cmd for the full AI stack.
 echo.
+echo Gemini analysis runs in the local worker, not in the browser.
+echo This publisher can securely save the Gemini key to the local .env.
+echo The key is NOT uploaded to Cloudflare Pages or committed to Git.
+echo.
+
+if not exist ".env" (
+  if exist ".env.example" copy /Y ".env.example" ".env" >nul
+)
+set "CONFIGURE_GEMINI=1"
+if exist ".env" (
+  findstr /R /C:"^[ ]*GEMINI_API_KEY[ ]*=[ ]*[^ ][^ ]*" ".env" >nul 2>&1
+  if not errorlevel 1 (
+    choice /C KN /N /M "Gemini key already exists. [K]eep it or enter a [N]ew key? "
+    if errorlevel 2 set "CONFIGURE_GEMINI=1"
+    if errorlevel 1 set "CONFIGURE_GEMINI=0"
+  )
+)
+if "%CONFIGURE_GEMINI%"=="1" (
+  if not exist "scripts\configure-gemini.ps1" (
+    echo [ERROR] scripts\configure-gemini.ps1 is missing.
+    pause
+    exit /b 1
+  )
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "scripts\configure-gemini.ps1"
+  if errorlevel 1 goto :fail
+)
+echo.
 
 where node >nul 2>&1
 if errorlevel 1 (
