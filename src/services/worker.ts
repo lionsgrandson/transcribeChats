@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { AnalysisResult, LanguageMode, TranscriptSegment } from '../domain/types';
+import { supabase } from './supabase';
 
 export const workerResponseSchema = z.object({
   duration_ms: z.number().nonnegative().optional(),
@@ -40,6 +41,44 @@ export async function transcribeWithWorker(
   existingJobId?: string,
   runDefaultAnalysis = true
 ): Promise<WorkerResult> {
+  // Prefer Cloudflare Workers AI when the trusted, build-time hosted endpoint is set.
+  // Never forward Supabase credentials to a user-editable worker URL.
+  const hostedUrl = import.meta.env.VITE_CLOUD_TRANSCRIBE_URL?.trim();
+  if (hostedUrl) {
+    if (!supabase) throw new Error('Hosted transcription requires configured Supabase authentication.');
+    const { data, error } = await supabase.auth.getSession();
+    if (error || !data.session?.access_token) throw new Error('Sign in from Settings before transcribing.');
+    if (file.size > 8 * 1024 * 1024) throw new Error('Hosted transcription supports audio up to 8 MiB. Compress or split the recording, or use the local engine.');
+    if (!/\.(mp3|m4a|wav|webm|ogg|opus|flac|mpeg)$/i.test(filename)) throw new Error('Hosted transcription requires audio. Video uploads need the local engine.');
+    const form = new FormData();
+    form.append('file', file, filename);
+    form.append('language_mode', languageMode);
+    form.append('context', context);
+    form.append('recorded_at', recordedAt);
+    await onProgress(15, 'Uploading audio securely');
+    const response = await fetch(`${hostedUrl.replace(/\/$/, '')}/v1/transcribe`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${data.session.access_token}` },
+      body: form
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null) as { error?: string } | null;
+      throw new Error(body?.error || `Hosted transcription failed (HTTP ${response.status}).`);
+    }
+    await onProgress(95, 'Saving transcript locally');
+    const parsed = workerResponseSchema.parse(await response.json());
+    return {
+      durationMs: parsed.duration_ms,
+      detectedLanguages: parsed.detected_languages,
+      segments: parsed.segments.map((segment) => ({
+        id: segment.id || crypto.randomUUID(), sequenceNo: segment.sequence_no,
+        speakerLabel: segment.speaker_label, startMs: segment.start_ms, endMs: segment.end_ms,
+        text: segment.text, originalText: segment.text, language: segment.language,
+        confidence: segment.confidence, edited: false
+      })),
+      analysis: (parsed.analysis ?? undefined) as AnalysisResult | undefined
+    };
+  }
   const baseUrl = workerUrl.replace(/\/$/, '');
   let jobId = existingJobId;
   if (!jobId) {
@@ -100,7 +139,8 @@ export async function transcribeWithWorker(
 
 export async function checkWorker(workerUrl: string): Promise<boolean> {
   try {
-    const response = await fetch(`${workerUrl.replace(/\/$/, '')}/health/ready`, { signal: AbortSignal.timeout(3000) });
+    const url = import.meta.env.VITE_CLOUD_TRANSCRIBE_URL?.trim() || workerUrl;
+    const response = await fetch(`${url.replace(/\/$/, '')}/health/ready`, { signal: AbortSignal.timeout(3000) });
     return response.ok;
   } catch {
     return false;

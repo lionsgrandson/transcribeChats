@@ -17,7 +17,7 @@ export function NewTranscriptionPage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { settings, createManual, processMedia, runOllamaAnalysis, workerReady, showToast } = useAppStore();
+  const { settings, createManual, processMedia, workerReady } = useAppStore();
   const initial = params.get('mode');
   const [mode, setMode] = useState<Mode>(initial === 'record' || initial === 'upload' || initial === 'text' ? initial : 'record');
   const [title, setTitle] = useState('');
@@ -48,7 +48,10 @@ export function NewTranscriptionPage() {
     setError(undefined);
     if (!candidate) return;
     if (!validMedia(candidate)) return setError(t('unsupportedFile'));
-    if (candidate.size > 2 * 1024 * 1024 * 1024) return setError(t('fileTooLarge'));
+    if (import.meta.env.VITE_CLOUD_TRANSCRIBE_URL) {
+      if (candidate.size > 8 * 1024 * 1024) return setError('Hosted transcription accepts a maximum of 8 MiB of audio. Compress/split the recording.');
+      if (!/\.(mp3|m4a|wav|webm|ogg|opus|flac|mpeg)$/i.test(candidate.name)) return setError('Hosted transcription supports audio only, not video.');
+    } else if (candidate.size > 2 * 1024 * 1024 * 1024) return setError(t('fileTooLarge'));
     setFile(candidate);
     if (!title) setTitle(candidate.name.replace(/\.[^.]+$/, ''));
   };
@@ -58,17 +61,6 @@ export function NewTranscriptionPage() {
     setBusy(true); setError(undefined);
     try {
       const id = await createManual({ title, text, languageMode, context, recordedAt: new Date(recordedAt).toISOString() });
-      if (workerReady !== false) {
-        try {
-          await runOllamaAnalysis(id);
-        } catch (reason) {
-          showToast(reason instanceof Error
-            ? `Conversation saved, but high-accuracy Ollama analysis failed: ${reason.message}`
-            : 'Conversation saved, but high-accuracy Ollama analysis failed. Open it and retry Analyze with Ollama.');
-        }
-      } else {
-        showToast('Conversation saved with basic fallback analysis because the local Ollama worker is offline. Start the worker and run Analyze with Ollama for the accurate CRM analysis.');
-      }
       navigate(`/transcriptions/${id}`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save the conversation.'); }
     finally { setBusy(false); }
@@ -139,12 +131,11 @@ export function NewTranscriptionPage() {
             <div className="record-actions">{!recording ? <Button onClick={() => void startRecording()}><Mic size={18} />{t('startRecording')}</Button> : <><Button variant="secondary" onClick={togglePause}>{paused ? <Play size={18} /> : <Pause size={18} />}{paused ? t('resume') : t('pause')}</Button><Button variant="danger" busy={busy} onClick={() => void stopRecording()}><Square size={17} />{t('stopRecording')}</Button></>}</div>
           </div>}
           {mode === 'upload' && <div className={`drop-zone ${dragging ? 'dragging' : ''}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); selectFile(event.dataTransfer.files[0]); }}>
-            {file ? <div className="selected-file"><FileAudio size={34} /><div><strong>{file.name}</strong><span>{(file.size / 1024 / 1024).toFixed(1)} MB · {file.type || 'media'}</span></div><button type="button" className="icon-button" onClick={() => setFile(undefined)} aria-label="Remove file"><X /></button></div> : <><UploadCloud size={40} /><strong>{t('dropFile')}</strong><span>{t('supportedFormats')}</span><label className="button button-secondary file-button">{t('chooseFile')}<input type="file" accept="audio/*,video/*,.mp3,.m4a,.mp4,.mov,.wav" onChange={(event) => selectFile(event.target.files?.[0])} /></label></>}
+            {file ? <div className="selected-file"><FileAudio size={34} /><div><strong>{file.name}</strong><span>{(file.size / 1024 / 1024).toFixed(1)} MB · {file.type || 'media'}</span></div><button type="button" className="icon-button" onClick={() => setFile(undefined)} aria-label="Remove file"><X /></button></div> : <><UploadCloud size={40} /><strong>{t('dropFile')}</strong><span>{import.meta.env.VITE_CLOUD_TRANSCRIBE_URL ? 'Audio only (MP3, M4A, WAV, WebM, OGG, FLAC), up to 8 MiB' : t('supportedFormats')}</span><label className="button button-secondary file-button">{t('chooseFile')}<input type="file" accept={import.meta.env.VITE_CLOUD_TRANSCRIBE_URL ? 'audio/*,.m4a,.mp3,.flac,.ogg,.opus' : 'audio/*,video/*,.mp3,.m4a,.mp4,.mov,.wav'} onChange={(event) => selectFile(event.target.files?.[0])} /></label></>}
           </div>}
           {mode === 'text' && <Field label={t('manualText')}><textarea className="manual-text" value={text} onChange={(event) => setText(event.target.value)} placeholder="Paste a conversation or meeting notes…" dir="auto" /></Field>}
         </div>
-        {mode !== 'text' && workerReady === false && <div className="banner banner-warning" role="status"><AlertTriangle size={18} aria-hidden="true" /><span>{t('workerUnavailable')}</span></div>}
-        {mode === 'text' && workerReady === false && <div className="banner banner-warning" role="status"><AlertTriangle size={18} aria-hidden="true" /><span>The local Ollama worker is offline. The conversation can still be saved, but only the basic fallback analysis will run until you start the worker and re-run Ollama analysis.</span></div>}
+        {mode !== 'text' && workerReady === false && <div className="banner banner-warning" role="status"><AlertTriangle size={18} aria-hidden="true" /><span>{import.meta.env.VITE_CLOUD_TRANSCRIBE_URL ? 'Hosted transcription is unavailable. Check service configuration in Settings.' : t('workerUnavailable')}</span></div>}
         {error && <div className="banner banner-error" role="alert"><AlertTriangle size={18} aria-hidden="true" /><span>{error}</span></div>}
         {mode !== 'record' && <div className="form-actions"><Button variant="ghost" onClick={() => navigate(-1)}>{t('cancel')}</Button><Button busy={busy} onClick={() => void (mode === 'text' ? submitText() : submitFile())}>{mode === 'text' ? t('processText') : 'Upload and transcribe'}</Button></div>}
       </Card>

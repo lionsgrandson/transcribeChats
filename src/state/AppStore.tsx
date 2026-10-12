@@ -199,21 +199,18 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       startMs: index * 10_000, endMs: (index + 1) * 10_000, text: line, originalText: line,
       language: /[\u0590-\u05FF]/.test(line) ? 'he' : 'en', edited: false
     }));
-    const result = analyzeText(text, new Date(recordedAt), createdSegments.map((segment) => segment.id));
     const transcription: Transcription = {
       id, title: title || lines[0]?.slice(0, 60) || 'Manual conversation', sourceType: 'manual', status: 'ready',
       languageMode, detectedLanguages: [...new Set(createdSegments.map((segment) => segment.language))],
       recordedAt, createdAt: now, updatedAt: now, durationMs: createdSegments.length * 10_000,
-      context, summary: result.summary, synced: false
+      context, synced: false
     };
-    const createdItems = makeItems(id, result);
-    await db.transaction('rw', db.transcriptions, db.segments, db.items, async () => {
+    await db.transaction('rw', db.transcriptions, db.segments, async () => {
       await db.transcriptions.add(transcription);
       if (createdSegments.length) await db.segments.bulkAdd(createdSegments);
-      if (createdItems.length) await db.items.bulkAdd(createdItems);
     });
     await reload();
-    showToast('Conversation analyzed and saved locally.');
+    showToast('Transcript saved locally.');
     return id;
   }, [reload, showToast]);
 
@@ -233,7 +230,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }, async (jobId) => {
         await db.transcriptions.update(transcription.id, { jobId, status: 'processing', updatedAt: new Date().toISOString() });
         setTranscriptions((current) => current.map((value) => value.id === transcription.id ? { ...value, jobId, status: 'processing' } : value));
-      }, transcription.jobId);
+      }, transcription.jobId, false);
       const createdSegments = result.segments.map((segment) => ({ ...segment, transcriptionId: transcription.id }));
       await db.transaction('rw', db.transcriptions, db.segments, async () => {
         await db.segments.where('transcriptionId').equals(transcription.id).delete();
@@ -243,8 +240,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           detectedLanguages: result.detectedLanguages, updatedAt: new Date().toISOString(), synced: false
         });
       });
-      const analysis = result.analysis || analyzeText(createdSegments.map((segment) => segment.text).join(' '), new Date(transcription.recordedAt), createdSegments.map((segment) => segment.id));
-      await persistAnalysis(transcription.id, analysis);
+      // New recordings produce only a transcript. Legacy extracted items remain intact.
       await reload();
       showToast('Transcription is ready.');
     } catch (reason) {
@@ -255,7 +251,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     } finally {
       activeProcessingIds.current.delete(transcription.id);
     }
-  }, [persistAnalysis, reload, settings.workerUrl, showToast]);
+  }, [reload, settings.workerUrl, showToast]);
 
   const processMedia = useCallback(async ({ title, blob, filename, languageMode, context, recordedAt, sourceType }: { title: string; blob: Blob; filename: string; languageMode: LanguageMode; context: string; recordedAt: string; sourceType: 'upload' | 'recording' }) => {
     const id = createId();
