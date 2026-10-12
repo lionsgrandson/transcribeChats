@@ -1,0 +1,23 @@
+name: Transcription-only CI
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "cloudflare/**"
+      - "package*.json"
+      - "wrangler.transcribe.jsonc"
+      - ".github/workflows/transcription-only-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: node --test cloudflare/transcribe-worker.test.mjs
