@@ -25,6 +25,7 @@ try {
   run(npm, ['ci']);
   run(npm, ['run', 'check']);
   run('node', ['--test', 'cloudflare/transcribe-worker.node.mjs']);
+  run(npm, ['audit', '--omit=dev', '--audit-level=high']);
   console.log('Deploying hosted Whisper API; required Worker secrets must already be configured.');
   run(npx, ['wrangler', 'deploy', '--config', 'wrangler.transcribe.jsonc']);
   let ready = false;
