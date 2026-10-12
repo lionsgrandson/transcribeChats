@@ -1,5 +1,13 @@
 name: Transcription-only CI
 on:
+  push:
+    branches: ["main"]
+    paths:
+      - "src/**"
+      - "cloudflare/**"
+      - "package*.json"
+      - "wrangler.transcribe.jsonc"
+      - ".github/workflows/transcription-only-ci.yml"
   pull_request:
     paths:
       - "src/**"
