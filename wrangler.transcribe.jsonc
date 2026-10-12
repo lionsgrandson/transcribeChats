@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "transcribechats-whisper",
+  "main": "cloudflare/transcribe-worker.mjs",
+  "compatibility_date": "2026-10-12",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": true,
+  "ai": {
+    "binding": "AI"
+  },
+  "ratelimits": [
+    {
+      "name": "RATE_LIMITER",
+      "namespace_id": "1701",
+      "simple": {
+        "limit": 3,
+        "period": 60
+      }
+    }
+  ]
+}
