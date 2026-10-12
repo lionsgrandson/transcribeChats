@@ -27,5 +27,21 @@
         "period": 60
       }
     }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GEMINI_JOBS",
+        "class_name": "GeminiSummaryJob"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1-gemini-summary-jobs",
+      "new_sqlite_classes": [
+        "GeminiSummaryJob"
+      ]
+    }
   ]
 }
