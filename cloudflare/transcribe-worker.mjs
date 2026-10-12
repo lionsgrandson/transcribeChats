@@ -102,7 +102,7 @@ async function summarizeWithGemini(request, env, cors) {
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.2, maxOutputTokens: MAX_SUMMARY_TOKENS, responseMimeType: 'application/json' }
+        generationConfig: { maxOutputTokens: MAX_SUMMARY_TOKENS, responseMimeType: 'application/json' }
       }),
       signal: AbortSignal.timeout(30000)
     });
