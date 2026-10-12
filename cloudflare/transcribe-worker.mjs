@@ -156,7 +156,23 @@ export default {
         segments,
         analysis: null,
       }, 200, cors);
-    } catch {
+    } catch (reason) {
+      const message = String(reason?.message || '');
+      const httpStatus = Number(reason?.status || reason?.statusCode || 0);
+      const isDailyLimit = /3036|daily free allocation|free allocation|neurons.*limit/i.test(message);
+      const isRateLimited = isDailyLimit || httpStatus === 429 || /3040|out of capacity|rate limit|quota exceeded/i.test(message);
+      if (isRateLimited) {
+        // Workers AI free daily allocation resets at 00:00 UTC. Its actual rate and
+        // capacity limit may be shorter or longer, so this is a retry estimate.
+        const midnightUtc = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1);
+        const retryAfterSeconds = isDailyLimit
+          ? Math.max(60, Math.ceil((midnightUtc - Date.now()) / 1000) + 60)
+          : 120;
+        return json({
+          error: isDailyLimit ? 'Daily hosted speech-to-text quota reached. Your recording is saved locally and can retry after the daily reset.' : 'Speech-to-text capacity is temporarily unavailable. Your recording is saved locally for retry.',
+          retryAfterSeconds
+        }, 429, { ...cors, 'Retry-After': String(retryAfterSeconds) });
+      }
       return json({ error: 'Transcription provider failed. Your original audio stays in your browser for retry.' }, 502, cors);
     }
   },
