@@ -13,9 +13,9 @@ Cloud mode accepts audio only (MP3, M4A, WAV, WebM/Opus, OGG, FLAC) up to **8 Mi
 The normal TranscribeChats product keeps Cloudflare Whisper for speech-to-text.
 In the transcript detail view, **Summarize with Gemini** is an opt-in action that sends
 the transcript text to Google's Gemini API. It uses the stable
-`gemini-3.5-flash-lite` model, capped to **20,000 characters** of transcript
-and **1,024 generated tokens** per request. A separate Cloudflare rate limiter
-allows **one Gemini request per minute per verified user, per Cloudflare location**.
+`gemini-3.5-flash-lite` model, capped to **120,000 characters** of transcript
+and **3,072 generated tokens** per request. A separate Cloudflare rate limiter
+allows **one Gemini job submission per minute per verified user, per Cloudflare location**.
 The existing Whisper rate limit remains independent.
 
 **Reuse the StudentTranscribe key securely:** Cloudflare Worker secrets cannot
@@ -35,10 +35,8 @@ Therefore StudentTranscribe and this app can consume the same project's free
 quota, and the per-user rate limiter / output cap is **not a hard global daily
 quota or a zero-billing guarantee**. Verify the current model quota and the
 project's billing status in https://aistudio.google.com/rate-limit and set
-project cost guardrails before enabling public users. Gemini returns HTTP 429
-when Google's model quota is exhausted; the app surfaces that error without
-trying a paid fallback. Transcripts above the character cap must be split.
-Cloudflare Workers AI (Whisper) may have separate usage costs.
+project cost guardrails before enabling public users. Gemini HTTP 429 and transient 5xx responses are handled by a Durable Object retry queue. The app shows an estimated retry time; once accepted, a queued summary can complete after the browser closes. Jobs expire after 72 hours or 12 attempts, and completed results are retained for 24 hours. The original local transcript is not deleted. Transcripts above the character cap must be split.
+Cloudflare Workers AI (Whisper) may have separate usage costs. Whisper quota responses store the original recording locally and schedule retry when the app is open or reopened; they do not create a server-side audio queue.
 
 **Export to ChatGPT** copies the complete transcript plus an analysis prompt
 to the browser clipboard and opens https://chatgpt.com/. The user must paste
@@ -46,7 +44,7 @@ and send it manually. This action does not send transcript contents from the
 Worker to ChatGPT. The existing TXT/PDF exports remain available.
 
 Before announcing go-live, run `npm run check`,
-`node --test cloudflare/transcribe-worker.node.mjs`, confirm `GEMINI_API_KEY`
+`node --test cloudflare/transcribe-worker.node.mjs`, confirm the `GEMINI_JOBS` Durable Object binding and `GEMINI_API_KEY`
 exists as a Worker secret, deploy using the existing publish script, and
 perform end-to-end tests of authenticated Hebrew and English summaries,
 Google 429 behavior, ChatGPT copying on desktop/mobile, transcription,
