@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker from './transcribe-worker.mjs';
+import worker, { GeminiSummaryJob } from './transcribe-worker.mjs';
 
 const origin = 'https://transcribe.example.com';
 const env = (overrides = {}) => ({
@@ -68,66 +68,119 @@ test('video upload is not accepted', async () => mockAuth(async () => {
   assert.equal(res.status, 415);
 }));
 
+const jobId = 'b61d55e4-a34e-4e51-b6c7-93215367477f';
 const analyzeBody = (transcript = '[00:00] Speaker 1: שלום עולם') => JSON.stringify({ title: 'Meeting', transcript });
-const analyzeRequest = (text = '[00:00] Speaker 1: שלום עולם') =>
-  call('POST', '/v1/analyze', analyzeBody(text), { ...auth, 'Content-Type': 'application/json' });
-
-async function withGeminiMock(fn, geminiResponse = Response.json({
-  candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'דובר על הנושא המרכזי.' }) }] } }]
-})) {
+const analyzeRequest = (transcript) => call('POST', '/v1/analyze', analyzeBody(transcript), {
+  ...auth, 'Content-Type': 'application/json', 'Idempotency-Key': jobId
+});
+function fakeStorage() {
+  const items = new Map();
+  return {
+    get: async (key) => items.get(key),
+    put: async (key, value) => { items.set(key, value); },
+    setAlarm: async (timestamp) => { items.set('alarmAt', timestamp); },
+    deleteAll: async () => { items.clear(); }
+  };
+}
+function geminiEnv(overrides = {}) {
+  const storage = fakeStorage();
+  const context = { storage };
+  const configuration = env({
+    GEMINI_API_KEY: 'server-private-gemini-key',
+    GEMINI_RATE_LIMITER: { limit: async () => ({ success: true }) },
+    ...overrides
+  });
+  const durable = new GeminiSummaryJob(context, configuration);
+  configuration.GEMINI_JOBS = {
+    idFromName: (name) => name,
+    get: () => ({ fetch: (...args) => durable.fetch(...args) })
+  };
+  return { configuration, durable, storage };
+}
+async function withProvider(fn, providerResponses = []) {
   const original = globalThis.fetch;
   const seen = [];
-  globalThis.fetch = async (input, init) => {
-    const url = String(input);
+  let iteration = 0;
+  globalThis.fetch = async (request, options) => {
+    const url = String(request);
     if (url.endsWith('/auth/v1/user')) return Response.json({ id: 'user-1', email_confirmed_at: '2026-10-12T00:00:00Z' });
-    if (url.includes('generativelanguage.googleapis.com')) {
-      seen.push({ url, init });
-      return geminiResponse;
-    }
-    throw new Error('Unexpected external request: ' + url);
+    if (!url.includes('generativelanguage.googleapis.com')) throw new Error('Unexpected URL: ' + url);
+    seen.push({ url, options });
+    return providerResponses[iteration++] || Response.json({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'דובר על הנושא המרכזי.' }) }] } }],
+      usageMetadata: { promptTokenCount: 512, candidatesTokenCount: 120 }
+    });
   };
   try { return await fn(seen); } finally { globalThis.fetch = original; }
 }
 
-test('Gemini analysis requires a verified user', async () => {
-  const res = await worker.fetch(analyzeRequest(), env({ GEMINI_API_KEY: 'private', GEMINI_RATE_LIMITER: { limit: async () => ({ success: true }) } }));
-  // No mocked authentication, so the real request is unavailable. Test missing bearer explicitly instead.
-  assert.notEqual(res.status, 200);
+test('Gemini queue rejects unverified callers', async () => {
+  const { configuration } = geminiEnv();
+  const res = await worker.fetch(call('POST', '/v1/analyze', analyzeBody(), { 'Content-Type': 'application/json' }), configuration);
+  assert.equal(res.status, 401);
 });
 
-test('Gemini analysis rejects missing secret without running model', async () => withGeminiMock(async (calls) => {
-  const res = await worker.fetch(analyzeRequest(), env({ GEMINI_RATE_LIMITER: { limit: async () => ({ success: true }) } }));
-  assert.equal(res.status, 503);
-  assert.equal(calls.length, 0);
-}));
+test('Gemini queue accepts idempotent requests without calling model in HTTP handler', async () =>
+  withProvider(async (seen) => {
+    const { configuration, storage } = geminiEnv();
+    const first = await worker.fetch(analyzeRequest(), configuration);
+    assert.equal(first.status, 202);
+    assert.equal((await first.json()).jobId, jobId);
+    const second = await worker.fetch(analyzeRequest(), configuration);
+    assert.equal(second.status, 202);
+    assert.equal(seen.length, 0);
+    assert.ok(await storage.get('alarmAt'));
+  }));
 
-test('Gemini summary uses server-only key and bounded output tokens', async () => withGeminiMock(async (calls) => {
-  const res = await worker.fetch(analyzeRequest(), env({ GEMINI_API_KEY: 'private-gemini-key', GEMINI_RATE_LIMITER: { limit: async () => ({ success: true }) } }));
-  assert.equal(res.status, 200);
-  const data = await res.json();
-  assert.equal(data.summary, 'דובר על הנושא המרכזי.');
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].init.headers['x-goog-api-key'], 'private-gemini-key');
-  const body = JSON.parse(calls[0].init.body);
-  assert.equal(body.generationConfig.maxOutputTokens, 1024);
-  assert.equal(body.generationConfig.responseMimeType, 'application/json');
-  assert.equal(res.headers.get('Cache-Control'), 'no-store');
-}));
+test('Gemini alarm eventually completes and polling retrieves summary', async () =>
+  withProvider(async (seen) => {
+    const { configuration, durable, storage } = geminiEnv();
+    await worker.fetch(analyzeRequest(), configuration);
+    await durable.alarm();
+    const res = await worker.fetch(call('GET', '/v1/analyze/' + jobId, undefined, auth), configuration);
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.status, 'ready');
+    assert.equal(data.summary, 'דובר על הנושא המרכזי.');
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].options.headers['x-goog-api-key'], 'server-private-gemini-key');
+    assert.equal(JSON.parse(seen[0].options.body).generationConfig.maxOutputTokens, 3072);
+    assert.equal((await storage.get('job')).transcript, '');
+  }));
 
-test('Gemini input size is enforced before API usage', async () => withGeminiMock(async (calls) => {
-  const res = await worker.fetch(analyzeRequest('x'.repeat(20_001)), env({ GEMINI_API_KEY: 'private', GEMINI_RATE_LIMITER: { limit: async () => ({ success: true }) } }));
+test('Gemini 429 queues a future alarm rather than dropping the transcript', async () =>
+  withProvider(async (seen) => {
+    const { configuration, durable, storage } = geminiEnv();
+    await worker.fetch(analyzeRequest(), configuration);
+    await durable.alarm();
+    const saved = await storage.get('job');
+    assert.equal(saved.status, 'waiting');
+    assert.ok(saved.nextRetryAt > Date.now());
+    assert.ok(await storage.get('alarmAt'));
+    assert.equal(seen.length, 1);
+  }, [Response.json({ error: { details: [{ retryDelay: '120s' }] } }, { status: 429 })]));
+
+test('Gemini 429 eventually retries and finishes on the next alarm', async () => withProvider(async () => {
+  const { configuration, durable, storage } = geminiEnv();
+  await worker.fetch(analyzeRequest(), configuration);
+  await durable.alarm();
+  const waiting = await storage.get('job');
+  await storage.put('job', { ...waiting, nextRetryAt: Date.now() - 1 });
+  await durable.alarm();
+  assert.equal((await storage.get('job')).status, 'ready');
+}, [Response.json({ error: { details: [{ retryDelay: '1s' }] } }, { status: 429 })]));
+
+test('Gemini upload size rejected and no job stored', async () => withProvider(async () => {
+  const { configuration, storage } = geminiEnv();
+  const res = await worker.fetch(analyzeRequest('x'.repeat(120_001)), configuration);
   assert.equal(res.status, 413);
-  assert.equal(calls.length, 0);
+  assert.equal(await storage.get('job'), undefined);
 }));
 
-test('Gemini quota errors are reported as 429 without fallback to paid models', async () => withGeminiMock(async (calls) => {
-  const res = await worker.fetch(analyzeRequest(), env({ GEMINI_API_KEY: 'private', GEMINI_RATE_LIMITER: { limit: async () => ({ success: true }) } }));
+test('Gemini submission limiter provides retry guidance', async () => withProvider(async (seen) => {
+  const { configuration } = geminiEnv({ GEMINI_RATE_LIMITER: { limit: async () => ({ success: false }) } });
+  const res = await worker.fetch(analyzeRequest(), configuration);
   assert.equal(res.status, 429);
-  assert.equal(calls.length, 1);
-}, Response.json({ error: { message: 'quota' } }, { status: 429 })));
-
-test('Gemini rate limit blocks model calls', async () => withGeminiMock(async (calls) => {
-  const res = await worker.fetch(analyzeRequest(), env({ GEMINI_API_KEY: 'private', GEMINI_RATE_LIMITER: { limit: async () => ({ success: false }) } }));
-  assert.equal(res.status, 429);
-  assert.equal(calls.length, 0);
+  assert.equal(res.headers.get('Retry-After'), '60');
+  assert.equal(seen.length, 0);
 }));
