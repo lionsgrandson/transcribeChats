@@ -33,6 +33,8 @@ export interface Transcription {
   stage?: string;
   jobId?: string;
   error?: string;
+  transcriptionRetryAt?: string;
+  transcriptionRetryCount?: number;
   synced?: boolean;
 }
 
