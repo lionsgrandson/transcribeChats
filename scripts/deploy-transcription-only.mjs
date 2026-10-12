@@ -32,13 +32,14 @@ try {
   for (let i = 0; i < 4; i++) {
     try {
       const res = await fetch(cloudUrl + '/health/ready', { signal: AbortSignal.timeout(8000) });
-      ready = res.ok && (await res.json()).status === 'ready';
+      const status = await res.json();
+      ready = res.ok && status.status === 'ready' && status.gemini === true;
       if (ready) break;
     } catch { /* Retry transient deployment propagation. */ }
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
-  if (!ready) throw new Error('Cloud transcription is not healthy. Verify ALLOWED_ORIGIN, SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY Worker secrets. Pages was NOT deployed.');
-  console.log('Worker health OK. Publishing compiled frontend to existing Cloudflare Pages project.');
+  if (!ready) throw new Error('Hosted transcription or Gemini background queue is not healthy. Verify GEMINI_API_KEY secret, GEMINI_JOBS Durable Object migration, ALLOWED_ORIGIN and Supabase Worker settings. Pages was NOT deployed.');
+  console.log('Worker and Gemini queue configuration health OK. Publishing compiled frontend to existing Cloudflare Pages project.');
   run(npx, ['wrangler', 'pages', 'deploy', 'dist', '--project-name', 'transcribe-chats', '--branch', 'main']);
   console.log('Pages command completed. Verify sign-in, audio transcription, TXT/PDF export and mobile recording before announcing launch.');
 } catch (error) {
