@@ -230,7 +230,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }, async (jobId) => {
         await db.transcriptions.update(transcription.id, { jobId, status: 'processing', updatedAt: new Date().toISOString() });
         setTranscriptions((current) => current.map((value) => value.id === transcription.id ? { ...value, jobId, status: 'processing' } : value));
-      }, transcription.jobId);
+      }, transcription.jobId, false);
       const createdSegments = result.segments.map((segment) => ({ ...segment, transcriptionId: transcription.id }));
       await db.transaction('rw', db.transcriptions, db.segments, async () => {
         await db.segments.where('transcriptionId').equals(transcription.id).delete();
