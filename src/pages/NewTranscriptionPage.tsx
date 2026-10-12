@@ -17,7 +17,7 @@ export function NewTranscriptionPage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { settings, createManual, processMedia } = useAppStore();
+  const { settings, createManual, processMedia, workerReady } = useAppStore();
   const initial = params.get('mode');
   const [mode, setMode] = useState<Mode>(initial === 'record' || initial === 'upload' || initial === 'text' ? initial : 'record');
   const [title, setTitle] = useState('');
