@@ -25,6 +25,10 @@ export interface Transcription {
   durationMs?: number;
   context?: string;
   summary?: string;
+  summaryJobId?: string;
+  summaryJobStatus?: 'queued' | 'processing' | 'waiting' | 'ready' | 'failed';
+  summaryNextRetryAt?: string;
+  summaryJobError?: string;
   progress?: number;
   stage?: string;
   jobId?: string;
