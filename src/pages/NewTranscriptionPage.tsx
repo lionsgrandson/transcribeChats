@@ -17,7 +17,7 @@ export function NewTranscriptionPage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { settings, createManual, processMedia, runOllamaAnalysis, workerReady, showToast } = useAppStore();
+  const { settings, createManual, processMedia } = useAppStore();
   const initial = params.get('mode');
   const [mode, setMode] = useState<Mode>(initial === 'record' || initial === 'upload' || initial === 'text' ? initial : 'record');
   const [title, setTitle] = useState('');
@@ -48,7 +48,10 @@ export function NewTranscriptionPage() {
     setError(undefined);
     if (!candidate) return;
     if (!validMedia(candidate)) return setError(t('unsupportedFile'));
-    if (candidate.size > 2 * 1024 * 1024 * 1024) return setError(t('fileTooLarge'));
+    if (import.meta.env.VITE_CLOUD_TRANSCRIBE_URL) {
+      if (candidate.size > 8 * 1024 * 1024) return setError('Hosted transcription accepts a maximum of 8 MiB of audio. Compress/split the recording.');
+      if (!/\.(mp3|m4a|wav|webm|ogg|opus|flac|mpeg)$/i.test(candidate.name)) return setError('Hosted transcription supports audio only, not video.');
+    } else if (candidate.size > 2 * 1024 * 1024 * 1024) return setError(t('fileTooLarge'));
     setFile(candidate);
     if (!title) setTitle(candidate.name.replace(/\.[^.]+$/, ''));
   };
@@ -58,17 +61,6 @@ export function NewTranscriptionPage() {
     setBusy(true); setError(undefined);
     try {
       const id = await createManual({ title, text, languageMode, context, recordedAt: new Date(recordedAt).toISOString() });
-      if (workerReady !== false) {
-        try {
-          await runOllamaAnalysis(id);
-        } catch (reason) {
-          showToast(reason instanceof Error
-            ? `Conversation saved, but high-accuracy Ollama analysis failed: ${reason.message}`
-            : 'Conversation saved, but high-accuracy Ollama analysis failed. Open it and retry Analyze with Ollama.');
-        }
-      } else {
-        showToast('Conversation saved with basic fallback analysis because the local Ollama worker is offline. Start the worker and run Analyze with Ollama for the accurate CRM analysis.');
-      }
       navigate(`/transcriptions/${id}`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save the conversation.'); }
     finally { setBusy(false); }
