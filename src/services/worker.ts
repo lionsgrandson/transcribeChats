@@ -22,6 +22,13 @@ export const jobStatusSchema = z.object({
   error: z.string().nullish()
 });
 
+export class TranscriptionRateLimitError extends Error {
+  constructor(public retryAfterSeconds: number, message: string) {
+    super(message);
+    this.name = 'TranscriptionRateLimitError';
+  }
+}
+
 export interface WorkerResult {
   durationMs?: number;
   detectedLanguages: string[];
@@ -62,7 +69,12 @@ export async function transcribeWithWorker(
       body: form
     });
     if (!response.ok) {
-      const body = await response.json().catch(() => null) as { error?: string } | null;
+      const body = await response.json().catch(() => null) as { error?: string; retryAfterSeconds?: number } | null;
+      if (response.status === 429) {
+        const retry = Number(response.headers.get('Retry-After')) || body?.retryAfterSeconds || 60;
+        const safeRetry = Math.min(24 * 60 * 60, Math.max(60, Number.isFinite(retry) ? retry : 60));
+        throw new TranscriptionRateLimitError(safeRetry, body?.error || 'Transcription quota reached.');
+      }
       throw new Error(body?.error || `Hosted transcription failed (HTTP ${response.status}).`);
     }
     await onProgress(95, 'Saving transcript locally');
