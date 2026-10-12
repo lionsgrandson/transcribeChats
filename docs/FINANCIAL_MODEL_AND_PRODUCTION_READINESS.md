@@ -1,5 +1,7 @@
 # TranscribeChats | ₪45 Subscription Unit Economics and Production Release Plan
 
+> **Scope notice (2026-10-12):** This is the **separate normal Transcribe app's** early ₪45/20-hour model, **not** the StudentTranscribe paid pricing plan. The student app currently transcribes with Gemini 3.5 Transcribe, not Whisper. At Google's published combined ~$0.005/audio minute, that provider can cost more than the proposed student monthly revenue if all allowed hours are consumed. The canonical student-tier proposal, truthful 300/500/1,000-user scenarios, and all new commitments are in [StudentTranscribe financial and scale model](https://github.com/lionsgrandson/StudentTranscribe/blob/main/docs/STUDENT_PRICING_SCALE_2026.md). GitHub Actions runner workflows were deleted at owner request; deploy locally with Wrangler and replace GitHub uptime probes with independent Cloudflare alerts before public paid launch.
+
 **Prepared:** 2026-10-12. **Status:** planning model, not proof that billing or production is live.  
 **Currency:** ILS, with USD at **₪3.0780 per $1** (Bank of Israel representative rate on 2026-10-12). The actual settlement rate may differ.
 
@@ -137,7 +139,7 @@ The correct **same StudentTranscribe Gemini key must be entered as a new secret 
 - [x] GitHub source includes idempotent Gemini Durable Object queue, bounded retries and resumable polling.
 - [x] Normal-app transcript page includes queued status and estimated retry countdown.
 - [x] Existing Whisper transcription and manual ChatGPT export flows remain in source.
-- [ ] CI passing on latest commit independently confirmed.
+- [ ] Manual local build/test checks passing on latest commit independently confirmed (GitHub Actions runner removed).
 - [ ] New Durable Object migration and Worker secret deployed and tested live.
 - [ ] End-to-end Hebrew/English Gemini and speech-to-text testing with real accounts.
 - [ ] Global provider quota budget and concurrency controls verified.
