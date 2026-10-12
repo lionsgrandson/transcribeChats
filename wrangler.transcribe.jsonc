@@ -18,6 +18,14 @@
         "limit": 3,
         "period": 60
       }
+    },
+    {
+      "name": "GEMINI_RATE_LIMITER",
+      "namespace_id": "1702",
+      "simple": {
+        "limit": 1,
+        "period": 60
+      }
     }
   ]
 }
