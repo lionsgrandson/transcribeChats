@@ -20,4 +20,4 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      - run: node --test cloudflare/transcribe-worker.test.mjs
+      - run: node --test cloudflare/transcribe-worker.node.mjs
