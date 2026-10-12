@@ -106,10 +106,10 @@ export function TranscriptionDetailPage() {
   }, [id, summaryJobId]);
 
   useEffect(() => {
-    if (summaryJobStatus !== 'waiting') return;
+    if (summaryJobStatus !== 'waiting' && !transcription?.transcriptionRetryAt) return;
     const interval = window.setInterval(() => setCurrentTime(Date.now()), 1000);
     return () => window.clearInterval(interval);
-  }, [summaryJobStatus]);
+  }, [summaryJobStatus, transcription?.transcriptionRetryAt]);
 
   const playFrom = (ms: number) => {
     if (!player.current) return;
@@ -206,6 +206,14 @@ export function TranscriptionDetailPage() {
     {(transcription.status === 'processing' || transcription.status === 'queued') && <Card>
       <strong>{transcription.stage || t('processing')}</strong><p>{transcription.progress ?? 0}%</p>
       <p className="muted">Keep this tab open when using the hosted audio processor. The original file remains locally available for retry.</p>
+    </Card>}
+    {transcription.status === 'queued' && transcription.transcriptionRetryAt && <Card>
+      <strong>{store.settings.locale === 'he' ? 'התמלול ממתין לחידוש המכסה' : 'Transcription waiting for available capacity'}</strong>
+      <p dir="auto">{store.settings.locale === 'he' ? 'ההקלטה המקורית שמורה בדפדפן זה. ניסיון חוזר אוטומטי יתבצע כשהאפליקציה פתוחה, או לאחר שתפתח אותה מחדש.' : 'Your original recording remains saved in this browser. Automatic retry runs while this app is open or after you reopen it.'}</p>
+      <p role="status">{store.settings.locale === 'he' ? 'ניסיון חוזר בעוד כ-' : 'Estimated retry in '}
+        {Math.max(0, Math.ceil((Date.parse(transcription.transcriptionRetryAt) - currentTime) / 1000))}
+        {store.settings.locale === 'he' ? ' שניות' : ' seconds'}</p>
+      <p className="muted">{store.settings.locale === 'he' ? 'אם המכסה עדיין מלאה, זמן ההמתנה יתארך. השלמה אינה מובטחת.' : 'If capacity is still unavailable, the wait may increase. Completion is not guaranteed.'}</p>
     </Card>}
     {segments.length > 0 && <p className="muted" role="note">{store.settings.locale === 'he' ? 'סיכום Gemini שולח את תוכן התמלול לעיבוד בענן רק בלחיצה. פתיחה ב-ChatGPT מעתיקה את התמלול ללוח ואינה שולחת אותו אוטומטית.' : 'Gemini sends transcript text to Google only when requested. ChatGPT export copies text to your clipboard; paste it yourself.'}</p>}
     {transcription.summary && <Card className="summary-view">
