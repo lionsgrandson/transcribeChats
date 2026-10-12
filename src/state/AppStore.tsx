@@ -14,7 +14,7 @@ import type {
 } from '../domain/types';
 import { createId } from '../lib/id';
 import { analyzeText } from '../services/analysis';
-import { analyzeSalesWithOllama, analyzeWithOllama, checkWorker, transcribeWithWorker } from '../services/worker';
+import { analyzeSalesWithOllama, analyzeWithOllama, checkWorker, transcribeWithWorker, TranscriptionRateLimitError } from '../services/worker';
 
 interface AppStoreValue {
   loading: boolean;
@@ -94,6 +94,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [notes, setNotes] = useState<TranscriptionNote[]>([]);
   const [toast, setToast] = useState<string>();
   const activeProcessingIds = useRef(new Set<string>());
+  const retryTimers = useRef(new Map<string, number>());
+  useEffect(() => () => {
+    retryTimers.current.forEach((timer) => window.clearTimeout(timer));
+    retryTimers.current.clear();
+  }, []);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -237,15 +242,35 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         if (createdSegments.length) await db.segments.bulkAdd(createdSegments);
         await db.transcriptions.update(transcription.id, {
           status: 'ready', progress: 100, stage: 'Ready', durationMs: result.durationMs,
-          detectedLanguages: result.detectedLanguages, updatedAt: new Date().toISOString(), synced: false
+          detectedLanguages: result.detectedLanguages, updatedAt: new Date().toISOString(), synced: false,
+          transcriptionRetryAt: undefined, transcriptionRetryCount: 0
         });
       });
       // New recordings produce only a transcript. Legacy extracted items remain intact.
       await reload();
       showToast('Transcription is ready.');
     } catch (reason) {
+      if (reason instanceof TranscriptionRateLimitError) {
+        const attempts = (transcription.transcriptionRetryCount || 0) + 1;
+        if (attempts <= 12) {
+          const backoffSeconds = Math.min(24 * 60 * 60, 60 * 2 ** Math.min(10, attempts - 1));
+          const seconds = Math.max(backoffSeconds, reason.retryAfterSeconds);
+          const retryAt = new Date(Date.now() + seconds * 1000).toISOString();
+          await db.transcriptions.update(transcription.id, {
+            status: 'queued', progress: 0, stage: 'Waiting for speech-to-text quota',
+            error: reason.message, transcriptionRetryAt: retryAt,
+            transcriptionRetryCount: attempts, updatedAt: new Date().toISOString()
+          });
+          await reload();
+          showToast('Transcription quota reached. The original recording is saved for automatic retry while this app is open.');
+          return;
+        }
+      }
       const message = reason instanceof Error ? reason.message : 'Transcription failed.';
-      await db.transcriptions.update(transcription.id, { status: 'failed', progress: 0, stage: 'Failed', error: message, updatedAt: new Date().toISOString() });
+      await db.transcriptions.update(transcription.id, {
+        status: 'failed', progress: 0, stage: 'Failed', error: message,
+        transcriptionRetryAt: undefined, updatedAt: new Date().toISOString()
+      });
       await reload();
       showToast('Transcription failed. The recording is still saved locally.');
     } finally {
@@ -271,7 +296,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     const transcription = await db.transcriptions.get(id);
     const media = await db.media.where('transcriptionId').equals(id).first();
     if (!transcription || !media) throw new Error('The local media file is missing.');
-    await db.transcriptions.update(id, { jobId: undefined, progress: 0, stage: 'Queued', error: undefined, updatedAt: new Date().toISOString() });
+    await db.transcriptions.update(id, { jobId: undefined, progress: 0, stage: 'Queued', error: undefined, transcriptionRetryAt: undefined, transcriptionRetryCount: 0, updatedAt: new Date().toISOString() });
     await processExistingMedia({ ...transcription, jobId: undefined, progress: 0, stage: 'Queued', error: undefined }, media);
   }, [processExistingMedia]);
 
@@ -284,6 +309,23 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         if (!media) {
           await db.transcriptions.update(transcription.id, { status: 'failed', progress: 0, stage: 'Failed', error: 'The locally saved media file is missing.', updatedAt: new Date().toISOString() });
           await reload();
+          return;
+        }
+        if (transcription.transcriptionRetryAt && transcription.status === 'queued') {
+          if (retryTimers.current.has(transcription.id)) return;
+          const retryAt = Date.parse(transcription.transcriptionRetryAt);
+          const delay = Number.isFinite(retryAt) ? Math.max(0, retryAt - Date.now()) : 60_000;
+          const timer = window.setTimeout(() => {
+            retryTimers.current.delete(transcription.id);
+            void (async () => {
+              const current = await db.transcriptions.get(transcription.id);
+              const originalMedia = await db.media.where('transcriptionId').equals(transcription.id).first();
+              if (current?.status === 'queued' && current.transcriptionRetryAt && originalMedia) {
+                await processExistingMedia(current, originalMedia);
+              }
+            })().catch(() => { /* Retained in IndexedDB; revisiting the app can retry. */ });
+          }, Math.min(delay, 2_147_000_000));
+          retryTimers.current.set(transcription.id, timer);
           return;
         }
         if (transcription.jobId) {
