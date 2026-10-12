@@ -78,7 +78,10 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
     const path = new URL(request.url).pathname;
     if (path === '/health/ready' && request.method === 'GET') {
-      return json({ status: env.AI && env.RATE_LIMITER && env.SUPABASE_URL && env.SUPABASE_PUBLISHABLE_KEY ? 'ready' : 'unconfigured' }, env.AI && env.RATE_LIMITER && env.SUPABASE_URL && env.SUPABASE_PUBLISHABLE_KEY ? 200 : 503, cors);
+      return json({
+        status: env.AI && env.RATE_LIMITER && env.SUPABASE_URL && env.SUPABASE_PUBLISHABLE_KEY ? 'ready' : 'unconfigured',
+        gemini: Boolean(env.GEMINI_API_KEY && env.GEMINI_RATE_LIMITER && env.GEMINI_JOBS)
+      }, env.AI && env.RATE_LIMITER && env.SUPABASE_URL && env.SUPABASE_PUBLISHABLE_KEY ? 200 : 503, cors);
     }
     const isTranscribe = path === '/v1/transcribe' && request.method === 'POST';
     const isAnalyzeCreate = path === '/v1/analyze' && request.method === 'POST';
