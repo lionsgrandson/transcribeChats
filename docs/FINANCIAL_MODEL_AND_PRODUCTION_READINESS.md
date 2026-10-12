@@ -114,6 +114,8 @@ Implemented source design:
 - Gemini is only invoked with the API key kept as a Worker secret. A model cap of **3,072 output tokens** and a 120,000-character transcript cap prevent unbounded single-request costs. Requests above that need a more capable chunked workflow; they are rejected, **not silently truncated**.
 - During a 429 on **initial submission** before the server accepts the job, the browser retries when the app is reopened or stays open. Once accepted, the Durable Object schedules retries independently of browser state.
 - ChatGPT export remains user-initiated: copy text locally and open ChatGPT; the app does not automatically send private content.
+- Hosted Cloudflare Whisper `429` capacity and daily-neuron errors return retry guidance. The browser retains the audio in IndexedDB and schedules bounded automatic retries when the app is open or reopened; the estimated wait appears in the transcript view. This is **not** a server-side audio queue and cannot finish with every client offline. Non-quota or repeated failures remain recoverable by manual retry.
+
 
 ### Required deployment steps
 
