@@ -6,7 +6,7 @@ import { db } from '../data/db';
 import { useTranslation } from '../i18n/useTranslation';
 import { formatDate, formatTimestamp } from '../lib/format';
 import { exportText, printPdf, transcriptAsText } from '../services/exports';
-import { summarizeTranscriptWithGemini } from '../services/gemini';
+import { createGeminiSummaryJob, getGeminiSummaryJob, SummaryRateLimitError, type SummaryJob } from '../services/gemini';
 import { useAppStore } from '../state/AppStore';
 
 export function TranscriptionDetailPage() {
@@ -21,6 +21,7 @@ export function TranscriptionDetailPage() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
+  const [currentTime, setCurrentTime] = useState(Date.now());
   const player = useRef<HTMLAudioElement>(null);
   const transcription = store.transcriptions.find((record) => record.id === id);
   const segments = store.tSegments(id);
@@ -35,6 +36,80 @@ export function TranscriptionDetailPage() {
     }).catch(() => setMediaUrl(''));
     return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); setMediaUrl(''); };
   }, [id]);
+
+  // A submitted job continues server-side via Durable Object alarms after the tab closes.
+  // On the next visit, this effect retrieves and saves the completed result locally.
+  const summaryJobId = transcription?.summaryJobId;
+  const summaryJobStatus = transcription?.summaryJobStatus;
+  const summaryRetryAt = transcription?.summaryNextRetryAt;
+  useEffect(() => {
+    if (!summaryJobId || !transcription || summaryJobStatus === 'ready' || summaryJobStatus === 'failed') return;
+    let stopped = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const schedule = (milliseconds: number) => {
+      if (!stopped) timeout = setTimeout(() => void check(), milliseconds);
+    };
+    const persist = async (job: SummaryJob) => {
+      if (stopped) return;
+      if (job.status === 'ready') {
+        if (!job.summary) throw new Error('Gemini completed without returning a summary.');
+        await store.updateTranscription(id, {
+          summary: job.summary, summaryJobStatus: 'ready', summaryNextRetryAt: undefined,
+          summaryJobError: undefined
+        });
+        store.showToast('Gemini summary completed and saved.');
+        return;
+      }
+      await store.updateTranscription(id, {
+        summaryJobStatus: job.status,
+        summaryNextRetryAt: job.nextRetryAt || undefined,
+        summaryJobError: job.error
+      });
+      if (job.status === 'failed') return;
+      const retryTime = job.nextRetryAt ? Date.parse(job.nextRetryAt) : NaN;
+      const wait = job.status === 'waiting' && Number.isFinite(retryTime)
+        ? Math.max(3000, retryTime - Date.now() + 3000)
+        : 8000;
+      schedule(wait);
+    };
+    const check = async () => {
+      try {
+        let job: SummaryJob;
+        try {
+          job = await getGeminiSummaryJob(summaryJobId);
+        } catch (reason) {
+          if (reason instanceof Error && reason.name === 'SummaryNotFound') {
+            job = await createGeminiSummaryJob(transcription, segments, summaryJobId);
+          } else throw reason;
+        }
+        await persist(job);
+      } catch (reason) {
+        if (stopped) return;
+        if (reason instanceof SummaryRateLimitError) {
+          await store.updateTranscription(id, {
+            summaryJobStatus: 'waiting', summaryNextRetryAt: reason.retryAt,
+            summaryJobError: reason.message
+          });
+          schedule(Math.max(3000, Date.parse(reason.retryAt) - Date.now() + 3000));
+        } else {
+          setError(reason instanceof Error ? reason.message : 'Summary check failed.');
+          // Transient polling errors preserve the job. No duplicate Gemini submission.
+          schedule(60_000);
+        }
+      }
+    };
+    const startAt = summaryJobStatus === 'waiting' && summaryRetryAt ? Date.parse(summaryRetryAt) : NaN;
+    schedule(Number.isFinite(startAt) ? Math.max(0, startAt - Date.now() + 3000) : 0);
+    return () => { stopped = true; if (timeout) clearTimeout(timeout); };
+    // Intentionally keyed to the stable local job identifier, not polling status updates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, summaryJobId]);
+
+  useEffect(() => {
+    if (summaryJobStatus !== 'waiting') return;
+    const interval = window.setInterval(() => setCurrentTime(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [summaryJobStatus]);
 
   const playFrom = (ms: number) => {
     if (!player.current) return;
@@ -54,12 +129,30 @@ export function TranscriptionDetailPage() {
     if (!transcription || summarizing) return;
     setSummarizing(true);
     setError('');
+    const jobId = crypto.randomUUID();
     try {
-      const summary = await summarizeTranscriptWithGemini(transcription, segments);
-      await store.updateTranscription(id, { summary });
-      store.showToast('Gemini summary saved locally. Review it against the transcript.');
+      // Persist the id before submission: if the network drops, the same request
+      // can safely be retried with its idempotency key on the next app visit.
+      await store.updateTranscription(id, {
+        summaryJobId: jobId, summaryJobStatus: 'queued',
+        summaryNextRetryAt: undefined, summaryJobError: undefined
+      });
+      const job = await createGeminiSummaryJob(transcription, segments, jobId);
+      await store.updateTranscription(id, {
+        summaryJobStatus: job.status,
+        summaryNextRetryAt: job.nextRetryAt || undefined,
+        summaryJobError: job.error
+      });
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Gemini summary failed.');
+      if (reason instanceof SummaryRateLimitError) {
+        await store.updateTranscription(id, {
+          summaryJobStatus: 'waiting', summaryNextRetryAt: reason.retryAt,
+          summaryJobError: reason.message
+        });
+      } else {
+        setError(reason instanceof Error ? reason.message : 'Gemini job submission failed.');
+        // Preserve the queued id to allow resuming after a transient network failure.
+      }
     } finally {
       setSummarizing(false);
     }
@@ -89,7 +182,7 @@ export function TranscriptionDetailPage() {
       <div><span className="eyebrow"><FileText size={15} />{t('transcript')}</span><h1 dir="auto">{transcription.title}</h1><p>{formatDate(transcription.recordedAt)} · {segments.length} {t('transcript').toLowerCase()} segments</p></div>
       <div className="header-actions">
         <StatusBadge status={transcription.status} />
-        <Button variant="secondary" busy={summarizing} disabled={!segments.length || transcription.status !== 'ready'} onClick={() => void runGeminiSummary()}><Sparkles size={16} />{store.settings.locale === 'he' ? 'סיכום עם Gemini' : 'Summarize with Gemini'}</Button>
+        <Button variant="secondary" busy={summarizing} disabled={!segments.length || transcription.status !== 'ready' || Boolean(transcription.summaryJobId && !['ready', 'failed'].includes(transcription.summaryJobStatus || 'queued'))} onClick={() => void runGeminiSummary()}><Sparkles size={16} />{store.settings.locale === 'he' ? 'סיכום עם Gemini' : 'Summarize with Gemini'}</Button>
         <Button variant="secondary" disabled={!segments.length} onClick={() => void exportToChatGpt()}><MessageSquare size={16} />{t('openInChatGPT')}</Button>
         <Button variant="secondary" onClick={() => exportText(transcription, segments, [])}><Download size={16} />TXT</Button>
         <Button variant="secondary" onClick={() => { try { printPdf(transcription, segments, []); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not open PDF.'); } }}><Download size={16} />PDF</Button>
@@ -97,6 +190,15 @@ export function TranscriptionDetailPage() {
       </div>
     </header>
     {error && <div role="alert" className="banner banner-error">{error}</div>}
+    {transcription.summaryJobId && !['ready', 'failed'].includes(transcription.summaryJobStatus || 'queued') && <Card>
+      <strong>{store.settings.locale === 'he' ? 'סיכום Gemini בתור' : 'Gemini summary queued'}</strong>
+      <p dir="auto">{transcription.summaryJobStatus === 'waiting'
+        ? (store.settings.locale === 'he' ? 'הגעת למגבלת השירות. הבקשה נשמרה ותתבצע שוב אוטומטית.' : 'Provider quota reached. Your request is saved and will retry automatically.')
+        : (store.settings.locale === 'he' ? 'התמלול נשלח לעיבוד. ניתן לסגור את החלון ולחזור מאוחר יותר.' : 'Your transcript is queued for processing. You may close this tab and return later.')}</p>
+      {transcription.summaryNextRetryAt && Number.isFinite(Date.parse(transcription.summaryNextRetryAt)) && <p role="status">{store.settings.locale === 'he' ? 'ניסיון חוזר משוער בעוד' : 'Estimated next attempt in'} {Math.max(0, Math.ceil((Date.parse(transcription.summaryNextRetryAt) - currentTime) / 1000))} {store.settings.locale === 'he' ? 'שניות' : 'seconds'}. {store.settings.locale === 'he' ? 'זהו זמן ניסיון נוסף, לא התחייבות להשלמה.' : 'This is a retry time, not a guaranteed completion time.'}</p>}
+      {transcription.summaryJobError && <p className="muted" dir="auto">{transcription.summaryJobError}</p>}
+    </Card>}
+    {transcription.summaryJobStatus === 'failed' && <div role="alert" className="banner banner-error">{transcription.summaryJobError || 'Gemini summary could not be completed. You can try again or export to ChatGPT.'}</div>}
     {transcription.status === 'failed' && <Card>
       <strong>{t('failed')}</strong><p>{transcription.error || 'Transcription failed, but your audio is still saved locally.'}</p>
       <Button onClick={() => void store.retryTranscription(id).catch((reason) => setError(String(reason)))}><RotateCcw size={16} />{t('retry')}</Button>
