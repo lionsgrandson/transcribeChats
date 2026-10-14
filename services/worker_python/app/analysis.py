@@ -216,7 +216,7 @@ def _ensure_meaningful_notes(result: Analysis, segments: list[Segment]) -> None:
 def _dedupe(result: Analysis) -> None:
     merged: list[AnalysisItem] = []
     for item in result.items:
-        duplicate = next((x for x in merged if x.kind == item.kind and ((item.kind in {"note", "takeaway"} and _similar_text(x.title, item.title)) or (item.kind in {"task", "event"} and set(x.sourceSegmentIds).intersection(item.sourceSegmentIds) and _similar_text(x.title, item.title)))), None)
+        duplicate = next((x for x in merged if x.kind == item.kind and ((item.kind in {"note", "takeaway"} and _similar_text(x.title, item.title)) or (item.kind in {"task", "event"} and _similar_text(f"{x.title} {x.body or ''}", f"{item.title} {item.body or ''}")))), None)
         if not duplicate:
             merged.append(item); continue
         duplicate.sourceSegmentIds = list(dict.fromkeys([*duplicate.sourceSegmentIds, *item.sourceSegmentIds]))
