@@ -14,7 +14,7 @@ const optionalDateSchema = z.preprocess(normalizeOptionalDate, z.string().option
 const importItemSchema = z.object({
   kind: z.enum(['task', 'event', 'note', 'takeaway', 'summary']),
   title: z.string().min(1).max(300),
-  body: z.string().max(5000).optional(),
+  body: z.string().max(50000).optional(),
   status: z.enum(['needs_review', 'open', 'completed', 'dismissed']).default('needs_review'),
   priority: z.enum(['none', 'low', 'medium', 'high', 'urgent']).default('none'),
   assignee: z.string().max(200).optional().nullable().transform((value) => value || undefined),
