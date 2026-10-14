@@ -235,6 +235,8 @@ CLASSIFICATION
 - EVENT/TIMELINE: a future meeting, call, appointment, visit, demo, launch, delivery, trip, flight or other dated occurrence belongs on the timeline even when phrased as a fact. "There is a meeting on Thursday" => event, NOT task. A request to arrange/schedule a meeting is a task; add an event only if the meeting itself is established.
 - Exact date/day with no time: startsAt/dueAt uses 00:00 only as a date anchor, tag it `date-only`, and say the time was not stated. Never imply midnight is real. If no exact date exists, leave the field null. Never invent dates/times.
 - Every task/event: status=`needs_review`, confirmed=false.
+- CRITICAL DEDUPLICATION: one real-world action = one task. Group repeated mentions, paraphrases, clarifications, negotiations and later restatements of the same underlying obligation before creating items. Emit one consolidated task using the most specific wording and combine all supporting sourceSegmentIds. Never create separate tasks merely because the same action appears at different timestamps or from different speakers.
+- Do not create a note/takeaway that merely restates a task/event unless it adds genuinely different information. Deduplicate semantically, not just by exact title.
 
 NOTES / CONTEXT INTELLIGENCE
 - Create one consolidated sourced note for EVERY important company, product, system, project, person, or substantial topic actually discussed.
@@ -244,9 +246,11 @@ NOTES / CONTEXT INTELLIGENCE
 - Preserve numbers and attribution exactly. If ₪2,000,000 is mentioned, attach it only to what the speaker said it referred to; never a nearby company by association.
 - Capture decisions as takeaways and important blockers, ownership, integrations, migration plans, budgets, requirements, preferences, risks and open questions as notes.
 
-SUMMARY
-- Summarize the WHOLE conversation: objective, important entities/systems and roles, current direction/decisions, significant figures with correct attribution, dependencies/risks, timeline items, and unresolved questions/next steps.
-- If transcript quality is uncertain, say so briefly; never infer motives, personality, mental state, gender or behavior from ASR artifacts/repetition.
+SUMMARY / DETAILED ANALYSIS
+- The top-level summary must be an in-depth standalone meeting analysis, not a short abstract.
+- Use readable plain-text section headings and bullets. Cover, when supported: executive outcome/current situation; important entities/systems and roles; requirements/features; tasks and ownership; commercial/pricing/payment terms; explicit decisions/agreements; significant figures with correct attribution; dependencies/risks/technical caveats; timeline items; unresolved questions; and recommended next steps.
+- Clearly label recommendations as recommendations, not agreements made in the meeting. Separate confirmed/agreed facts from proposals, estimates, assumptions and examples.
+- Preserve scope boundaries and caveats. If speaker attribution or transcript quality is uncertain, say so briefly rather than guessing; never infer motives, personality, mental state, gender or behavior from ASR artifacts/repetition.
 
 EVIDENCE
 - Every item must use only exact segment ids below. Multiple source ids are encouraged for synthesized notes.
@@ -266,6 +270,7 @@ def _verification_prompt(transcript: str, draft: Analysis, schema: dict, convers
 
 Check every item:
 1. Remove/convert false tasks; a task requires explicit commitment/direct request.
+1a. Merge semantically duplicate tasks/events. One real-world action must appear once, with all supporting source ids combined. Rewording, clarification or repetition is not a new task.
 2. Future planned/datetime meetings and occurrences are events, including factual wording like "there is a meeting Thursday". Do not call them tasks unless someone is asked to arrange them.
 3. Every important company/system/project/topic has a consolidated sourced note with useful body context, not a copied sentence.
 4. Re-check money, dates, company roles, integrations, migrations and dependencies for correct subject/attribution.
