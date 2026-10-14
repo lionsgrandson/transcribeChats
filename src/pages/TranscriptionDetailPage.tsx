@@ -131,6 +131,12 @@ export function TranscriptionDetailPage() {
     if (!transcription || summarizing) return;
     setSummarizing(true);
     setError('');
+    if (!import.meta.env.VITE_CLOUD_TRANSCRIBE_URL && !import.meta.env.VITE_AI_API_URL) {
+      try { await store.runOllamaAnalysis(id, 'gemini'); }
+      catch (reason) { setError(reason instanceof Error ? reason.message : 'Gemini analysis failed.'); }
+      finally { setSummarizing(false); }
+      return;
+    }
     const jobId = crypto.randomUUID();
     try {
       // Persist the id before submission: if the network drops, the same request

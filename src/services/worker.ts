@@ -162,13 +162,13 @@ export async function checkWorker(workerUrl: string): Promise<boolean> {
   }
 }
 
-export async function analyzeWithOllama(workerUrl: string, segments: TranscriptSegment[], recordedAt: string, context: string): Promise<AnalysisResult> {
+export async function analyzeWithOllama(workerUrl: string, segments: TranscriptSegment[], recordedAt: string, context: string, provider: 'ollama' | 'gemini' = 'ollama'): Promise<AnalysisResult> {
   requireLocalWorker();
   const response = await fetch(`${workerUrl.replace(/\/$/, '')}/v1/analyze`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      provider: 'ollama',
+      provider,
       recorded_at: recordedAt,
       context,
       segments: segments.map((segment) => ({

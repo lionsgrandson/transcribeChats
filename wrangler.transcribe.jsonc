@@ -1,12 +1,13 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "transcribechats-whisper",
+  "name": "transcribechats-unified",
   "main": "cloudflare/transcribe-worker.mjs",
   "compatibility_date": "2026-10-12",
   "compatibility_flags": [
     "nodejs_compat"
   ],
   "workers_dev": true,
+  "vars": { "ENABLE_LOCAL_ORIGIN": "true" },
   "ai": {
     "binding": "AI"
   },

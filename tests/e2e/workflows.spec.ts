@@ -127,3 +127,22 @@ test('Hebrew RTL navigation and mobile layout remain usable', async ({ page }) =
   }
   await page.screenshot({ path: 'test-results/mobile-hebrew.png', fullPage: true });
 });
+
+test('manual dated event appears in calendar and retains its local date on edit', async ({ page }) => {
+  await createTranscript(page);
+  await page.getByRole('button', { name: 'Add item', exact: true }).click();
+  await page.getByLabel('Item type', { exact: true }).selectOption('event');
+  await page.getByLabel('Title', { exact: true }).fill('Synthetic calendar validation');
+  await page.getByRole('button', { name: 'Save item', exact: true }).click();
+  const event = page.locator('.followup-card.kind-event');
+  await expect(event).toBeVisible();
+  await event.getByRole('button', { name: 'Edit', exact: true }).click();
+  await event.getByLabel('Event date and time', { exact: true }).fill('2026-10-15T14:30');
+  await event.getByRole('button', { name: 'Save', exact: true }).click();
+  await event.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(event.getByLabel('Event date and time', { exact: true })).toHaveValue('2026-10-15T14:30');
+  await page.goto('/calendar');
+  await expect(page.locator('.calendar-event').filter({ hasText: 'Synthetic calendar validation' })).toBeVisible();
+  await page.reload();
+  await expect(page.locator('.calendar-event').filter({ hasText: 'Synthetic calendar validation' })).toBeVisible();
+});

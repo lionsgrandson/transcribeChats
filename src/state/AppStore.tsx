@@ -47,7 +47,7 @@ interface AppStoreValue {
   addNote: (transcriptionId: string, body: string) => Promise<void>;
   deleteTranscription: (id: string) => Promise<void>;
   runAnalysis: (id: string) => Promise<void>;
-  runOllamaAnalysis: (id: string) => Promise<AnalysisResult>;
+  runOllamaAnalysis: (id: string, provider?: 'ollama' | 'gemini') => Promise<AnalysisResult>;
   runSalesAnalysis: (id: string) => Promise<AnalysisResult>;
   loadDemo: () => Promise<void>;
   clearData: () => Promise<void>;
@@ -467,14 +467,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     await reload();
     showToast('Analysis completed.');
   }, [persistAnalysis, reload, showToast]);
-  const runOllamaAnalysis = useCallback(async (id: string) => {
+  const runOllamaAnalysis = useCallback(async (id: string, provider: 'ollama' | 'gemini' = 'ollama') => {
     const transcription = await db.transcriptions.get(id);
     const values = await db.segments.where('transcriptionId').equals(id).sortBy('sequenceNo');
     if (!transcription || !values.length) throw new Error('A transcript is required before Ollama analysis.');
-    const result = await analyzeWithOllama(settings.workerUrl, values, transcription.recordedAt, transcription.context || '');
+    const result = await analyzeWithOllama(settings.workerUrl, values, transcription.recordedAt, transcription.context || '', provider);
     await persistAnalysis(id, result);
     await reload();
-    showToast('Ollama analysis completed. Review suggestions before accepting them.');
+    showToast(`${provider === 'gemini' ? 'Gemini' : 'Ollama'} analysis completed. Review suggestions before accepting them.`);
     return result;
   }, [persistAnalysis, reload, settings.workerUrl, showToast]);
 

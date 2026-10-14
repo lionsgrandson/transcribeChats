@@ -6,7 +6,7 @@ import { useAppStore } from '../state/AppStore';
 import { cloudTranscription, hostedRuntime } from '../services/runtime';
 import { createGeminiSummaryJob } from '../services/gemini';
 import { exportCsv } from '../services/exports';
-import { formatDate } from '../lib/format';
+import { dateTimeInputValue, formatDate } from '../lib/format';
 import { Button, Card, Field, StatusBadge } from './ui';
 import { ChatGptModal } from './ChatGptModal';
 import { CrmTaskTransfer } from './CrmTaskTransfer';
@@ -15,6 +15,11 @@ function Followup({ item }: { item: ExtractedItem }) {
   const store = useAppStore();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.title);
+  const [body, setBody] = useState(item.body || '');
+  const [assignee, setAssignee] = useState(item.assignee || '');
+  const [priority, setPriority] = useState(item.priority);
+  const [date, setDate] = useState(dateTimeInputValue(item.kind === 'event' ? item.startsAt : item.dueAt));
+  const [reminder, setReminder] = useState(dateTimeInputValue(item.reminderAt));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const update = async (patch: Partial<ExtractedItem>) => {
@@ -29,9 +34,10 @@ function Followup({ item }: { item: ExtractedItem }) {
       <div className="item-meta"><span>{item.kind}</span><StatusBadge status={item.status} /><span>{Math.round(item.confidence * 100)}% confidence</span><span>{item.confirmed ? 'Confirmed by you' : 'Review suggestion'}</span>{item.assignee && <span>{item.assignee}</span>}{(item.dueAt || item.startsAt) && <span>{formatDate(item.dueAt || item.startsAt!)}</span>}</div>
     </div>{item.kind === 'task' && <CrmTaskTransfer tasks={[item]} />}</div>
     {item.body && <p dir="auto">{item.body}</p>}{item.uncertaintyReason && <p className="uncertainty" dir="auto">{item.uncertaintyReason}</p>}
+    {editing && <div className="form-grid two-columns"><Field label="Details"><textarea value={body} onChange={(event) => setBody(event.target.value)} dir="auto" /></Field><Field label="Assignee"><input value={assignee} onChange={(event) => setAssignee(event.target.value)} dir="auto" /></Field><Field label="Priority"><select value={priority} onChange={(event) => setPriority(event.target.value as ExtractedItem['priority'])}>{['none', 'low', 'medium', 'high', 'urgent'].map((value) => <option key={value}>{value}</option>)}</select></Field>{['task', 'event'].includes(item.kind) && <><Field label={item.kind === 'event' ? 'Event date and time' : 'Due date'}><input type="datetime-local" value={date} onChange={(event) => setDate(event.target.value)} /></Field><Field label="Reminder"><input type="datetime-local" value={reminder} onChange={(event) => setReminder(event.target.value)} /></Field></>}</div>}
     {source && <a className="followup-source" href={`#segment-${source.id}`} onClick={() => document.getElementById(`segment-${source.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>{source.speakerLabel}: {source.text}</a>}
     <div className="workspace-actions">
-      {editing ? <><Button disabled={!draft.trim() || busy} onClick={() => void update({ title: draft.trim() })}>Save</Button><Button variant="ghost" onClick={() => setEditing(false)}>Cancel</Button></> : <Button variant="ghost" onClick={() => { setDraft(item.title); setEditing(true); }}>Edit</Button>}
+      {editing ? <><Button disabled={!draft.trim() || busy} onClick={() => void update({ title: draft.trim(), body, assignee: assignee.trim() || undefined, priority, ...(item.kind === 'task' ? { dueAt: date ? new Date(date).toISOString() : undefined } : item.kind === 'event' ? { startsAt: date ? new Date(date).toISOString() : undefined } : {}), reminderAt: reminder ? new Date(reminder).toISOString() : undefined })}>Save</Button><Button variant="ghost" onClick={() => setEditing(false)}>Cancel</Button></> : <Button variant="ghost" onClick={() => { setDraft(item.title); setBody(item.body || ''); setAssignee(item.assignee || ''); setPriority(item.priority); setDate(dateTimeInputValue(item.kind === 'event' ? item.startsAt : item.dueAt)); setReminder(dateTimeInputValue(item.reminderAt)); setEditing(true); }}>Edit</Button>}
       {item.status === 'needs_review' && <Button disabled={busy} onClick={() => void update({ status: 'open', confirmed: true })}><Check size={15} />Accept</Button>}
       {item.kind === 'task' && item.status !== 'dismissed' && <Button variant="secondary" disabled={busy} onClick={() => void update({ status: item.status === 'completed' ? 'open' : 'completed', confirmed: true })}>{item.status === 'completed' ? 'Reopen' : 'Complete'}</Button>}
       {item.status !== 'dismissed' && <Button variant="ghost" disabled={busy} onClick={() => void update({ status: 'dismissed' })}><X size={15} />Dismiss</Button>}
