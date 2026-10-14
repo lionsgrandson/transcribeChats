@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { hostedRuntime, requireLocalWorker } from './runtime';
 import type { AnalysisResult, LanguageMode, TranscriptSegment } from '../domain/types';
-import { supabase } from './supabase';
+import { hostedAccessHeaders } from './hostedAccess';
 
 export const workerResponseSchema = z.object({
   duration_ms: z.number().nonnegative().optional(),
@@ -53,9 +53,6 @@ export async function transcribeWithWorker(
   // Never forward Supabase credentials to a user-editable worker URL.
   const hostedUrl = import.meta.env.VITE_CLOUD_TRANSCRIBE_URL?.trim();
   if (hostedUrl) {
-    if (!supabase) throw new Error('Hosted transcription requires configured Supabase authentication.');
-    const { data, error } = await supabase.auth.getSession();
-    if (error || !data.session?.access_token) throw new Error('Sign in from Settings before transcribing.');
     if (file.size > 8 * 1024 * 1024) throw new Error('Hosted transcription supports audio up to 8 MiB. Compress or split the recording, or use the local engine.');
     if (!/\.(mp3|m4a|wav|webm|ogg|opus|flac|mpeg)$/i.test(filename)) throw new Error('Hosted transcription requires audio. Video uploads need the local engine.');
     const form = new FormData();
@@ -66,7 +63,7 @@ export async function transcribeWithWorker(
     await onProgress(15, 'Uploading audio securely');
     const response = await fetch(`${hostedUrl.replace(/\/$/, '')}/v1/transcribe`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${data.session.access_token}` },
+      headers: await hostedAccessHeaders(),
       body: form
     });
     if (!response.ok) {

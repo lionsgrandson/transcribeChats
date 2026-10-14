@@ -1,6 +1,6 @@
 /**
  * Transcription-only API. Private audio is processed in memory and is not logged
- * or stored by this Worker. Requires a verified Supabase user and rate limits.
+ * or stored by this Worker. Supports guest browser capabilities and optional accounts.
  * Do not expose SUPABASE_PUBLISHABLE_KEY as a secret: it is a public project key.
  */
 import { Buffer } from 'node:buffer';
@@ -26,7 +26,7 @@ function json(body, status = 200, headers = {}) {
 function corsHeaders(origin, allowed) {
   return origin === allowed ? {
     'Access-Control-Allow-Origin': allowed,
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key, X-Guest-Token',
     'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
     'Access-Control-Max-Age': '600',
     'Vary': 'Origin',
@@ -35,7 +35,13 @@ function corsHeaders(origin, allowed) {
 
 async function authenticate(request, env) {
   const token = /^Bearer ([A-Za-z0-9._-]+)$/.exec(request.headers.get('Authorization') || '')?.[1];
-  if (!token) return null;
+  if (!token) {
+    // An invalid explicit credential must not silently become a guest request.
+    if (request.headers.has('Authorization') || env.ALLOW_GUEST_ACCESS !== 'true' || !request.headers.get('Origin')) return null;
+    const guest = request.headers.get('X-Guest-Token') || '';
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(guest)) return null;
+    return 'guest:' + guest.toLowerCase();
+  }
   if (!env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY) throw new Error('Auth provider is not configured.');
   const response = await fetch(new URL('/auth/v1/user', env.SUPABASE_URL), {
     headers: { apikey: env.SUPABASE_PUBLISHABLE_KEY, Authorization: `Bearer ${token}` },
@@ -45,6 +51,15 @@ async function authenticate(request, env) {
   const user = await response.json();
   if (!user?.id || !user?.email_confirmed_at) return null;
   return user.id;
+}
+
+async function submissionAllowed(limiter, request, owner) {
+  // Cloudflare supplies this header. A fresh browser token cannot evade IP limits.
+  // Store only a digest in rate-limit keys, never log the raw address or capability.
+  const address = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const digest = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(address))).toString('hex');
+  if (!(await limiter.limit({ key: 'ip:' + digest })).success) return false;
+  return (await limiter.limit({ key: 'owner:' + owner })).success;
 }
 
 function normaliseSegments(result) {
@@ -79,10 +94,12 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
     const path = new URL(request.url).pathname;
     if (path === '/health/ready' && request.method === 'GET') {
+      const accessReady = env.ALLOW_GUEST_ACCESS === 'true' || (env.SUPABASE_URL && env.SUPABASE_PUBLISHABLE_KEY);
       return json({
-        status: env.AI && env.RATE_LIMITER && env.SUPABASE_URL && env.SUPABASE_PUBLISHABLE_KEY ? 'ready' : 'unconfigured',
+        status: env.AI && env.RATE_LIMITER && accessReady ? 'ready' : 'unconfigured',
+        guestAccess: env.ALLOW_GUEST_ACCESS === 'true',
         gemini: Boolean(env.GEMINI_API_KEY && env.GEMINI_RATE_LIMITER && env.GEMINI_JOBS)
-      }, env.AI && env.RATE_LIMITER && env.SUPABASE_URL && env.SUPABASE_PUBLISHABLE_KEY ? 200 : 503, cors);
+      }, env.AI && env.RATE_LIMITER && accessReady ? 200 : 503, cors);
     }
     const isTranscribe = path === '/v1/transcribe' && request.method === 'POST';
     const isAnalyzeCreate = path === '/v1/analyze' && request.method === 'POST';
@@ -98,8 +115,8 @@ export default {
     } catch {
       return json({ error: 'Authentication provider unavailable.' }, 503, cors);
     }
-    if (!userId) return json({ error: 'Sign in with a verified email to transcribe.' }, 401, cors);
-    // Polling is authenticated and does not consume the submission quota.
+    if (!userId) return json({ error: 'Browser access is missing or expired. Reload the app, or reconnect your optional sync account.' }, 401, cors);
+    // Polling is scoped to the account or private browser capability, without submission quota.
     if (isAnalyzeStatus) {
       const stub = env.GEMINI_JOBS.get(env.GEMINI_JOBS.idFromName(userId + ':' + analysisJobId));
       const result = await stub.fetch('https://jobs.internal/status');
@@ -107,8 +124,7 @@ export default {
       return json({ jobId: analysisJobId, ...data }, result.status, cors);
     }
     const limiter = isAnalyzeCreate ? env.GEMINI_RATE_LIMITER : env.RATE_LIMITER;
-    const limit = await limiter.limit({ key: userId });
-    if (!limit.success) return json({ error: 'Request rate limit reached. Retry after 60 seconds.', retryAfterSeconds: 60 }, 429, { ...cors, 'Retry-After': '60' });
+    if (!(await submissionAllowed(limiter, request, userId))) return json({ error: 'Request rate limit reached. Retry after 60 seconds.', retryAfterSeconds: 60 }, 429, { ...cors, 'Retry-After': '60' });
     if (isAnalyzeCreate) {
       const length = Number(request.headers.get('Content-Length') || 0);
       if (length > MAX_BODY_BYTES) return json({ error: 'Summary request exceeds the 256 KB size limit.' }, 413, cors);

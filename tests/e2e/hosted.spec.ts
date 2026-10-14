@@ -13,10 +13,10 @@ async function authorize(context: BrowserContext, user: TestIdentity) {
   }, { ...user.session, expires_at: user.session.expires_at || Math.floor(Date.now() / 1000) + user.session.expires_in });
 }
 
-test('hosted sign-in gate protects workspace routes', async ({ page }) => {
+test('hosted workspace opens without a sign-in gate', async ({ page }) => {
   await page.goto('/transcriptions/private-validation-id');
-  await expect(page.getByRole('heading', { name: 'TranscribeChats' })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Email sign-in link/ })).toBeVisible();
+  await expect(page.getByText('This transcript was not found on this device.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Email sign-in link/ })).toHaveCount(0);
   await expect(page.locator('.transcription-segment')).toHaveCount(0);
 });
 

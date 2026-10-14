@@ -7,7 +7,7 @@
     "nodejs_compat"
   ],
   "workers_dev": true,
-  "vars": { "ENABLE_LOCAL_ORIGIN": "true" },
+  "vars": { "ENABLE_LOCAL_ORIGIN": "true", "ALLOW_GUEST_ACCESS": "true" },
   "ai": {
     "binding": "AI"
   },

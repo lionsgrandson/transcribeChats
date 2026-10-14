@@ -1,9 +1,9 @@
 # TranscribeChats
 
-One React/PWA application for Hebrew and English transcription, meeting follow-ups, tasks, calendar, learning and conversation review. `main` is the canonical development branch.
+React/PWA for Hebrew and English transcription, meeting follow-ups, tasks, calendar, learning and conversation review. **`main` is the localhost application; `cloudflare` is the hosted release branch.** Cloudflare Pages deploys only `cloudflare`. Do not merge its hosted configuration back over desktop defaults.
 
 - **Desktop:** Python Faster-Whisper on NVIDIA CUDA, audio/video import, optional pyannote speaker separation, explicit Ollama or Gemini analysis, offline IndexedDB storage.
-- **Hosted:** verified Supabase accounts, Cloudflare Workers AI speech-to-text, server-side Gemini jobs with durable retries, account-isolated browser storage and optional cloud sync. Hosted pages do not contact localhost services.
+- **Hosted (`cloudflare`):** open the website and start immediately, without signing in, installing Docker or running Python. Cloudflare Workers AI handles speech and Gemini jobs run on the server. Data stays in this browser. An optional account enables private cloud sync; hosted pages never call localhost services.
 - **Shared:** editable transcript text and speaker labels, timestamp playback, searchable history, TXT/PDF/CSV exports, tasks with bulk actions, calendar, personal notes, CodeCrafter CRM, ChatGPT export/import, courses and interactive quizzes.
 
 See [implementation and verification report](docs/UNIFICATION_REPORT.md) and [branch reconciliation](docs/BRANCH_AUDIT.md).
@@ -37,21 +37,20 @@ docker exec transcribechats-transcription-worker-1 python -m unittest discover -
 
 ## Hosted setup
 
-The production application is **https://transcribe-chats.pages.dev/**. The Pages project is linked to `lionsgrandson/transcribeChats`, production branch `main`.
+The production application is **https://transcribe-chats.pages.dev/**. The Pages project is linked to `lionsgrandson/transcribeChats`, production branch **`cloudflare`**. This branch includes public `.env.production` defaults for the hosted backend. `npm run build` produces the web app; `npm run preview -- --port 4174` previews it without Docker or Python. Use `main` for the original localhost/Python workflow.
 
-Set these **public** production build variables in Pages, or in an ignored `.env.production.local` for manual publishing:
+The only required **public** hosted build configuration is already in `.env.production`. Override it in Pages or an ignored `.env.production.local` when using a different Worker:
 
 ```dotenv
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=your-publishable-or-anon-key
 VITE_CLOUD_TRANSCRIBE_URL=https://transcribechats-unified.your-account.workers.dev
 VITE_RUNTIME_MODE=hosted
-VITE_TURNSTILE_SITE_KEY=your-public-site-key
 ```
 
-Configure Supabase email authentication and allow the production origin in its redirect URLs. If CAPTCHA protection is enabled, supply the public Turnstile key and allow the application domain in the widget. Never disable CAPTCHA just to make a login test pass.
+Supabase is optional, for users who want cross-device sync. Set public `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` and, if CAPTCHA is enabled, `VITE_TURNSTILE_SITE_KEY`. Allow the production origin in authentication redirects. The application and inference work without these settings; existing accounts and their private databases remain available when configured.
 
-The Worker in `wrangler.transcribe.jsonc` requires `AI`, `RATE_LIMITER`, `GEMINI_RATE_LIMITER`, and the `GEMINI_JOBS` SQLite Durable Object binding. Private Worker secrets are `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` and `ALLOWED_ORIGIN`. Provision with `scripts/configure-hosted.mjs` only after loading trusted environment values; do not commit those files or put AI keys, Supabase secret/service-role keys, or Cloudflare tokens in `VITE_*`.
+The Worker in `wrangler.transcribe.jsonc` requires `AI`, `RATE_LIMITER`, `GEMINI_RATE_LIMITER`, and the `GEMINI_JOBS` SQLite Durable Object binding. Guest access is explicitly enabled by `ALLOW_GUEST_ACCESS=true`. Required private configuration is `GEMINI_API_KEY` and `ALLOWED_ORIGIN`. `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` support optional accounts. Provision with `scripts/configure-hosted.mjs` only after loading trusted environment values; never put AI keys, Supabase service-role keys or Cloudflare tokens in `VITE_*`.
+
+Guest analysis jobs use a random browser capability stored locally, rather than a shared account. A different browser cannot retrieve them even with the same job ID. Submission limits apply to both the browser and Cloudflare's client-IP digest, so rotating tokens does not reset the IP limit. Existing provider quotas remain in force. Never copy the guest capability into shared logs or URLs.
 
 The new Worker name preserves an independently deployed legacy `transcribechats-whisper` service and its existing D1/R2/queue data. Do not remove that service as part of Git branch cleanup.
 
@@ -59,9 +58,9 @@ Hosted Whisper accepts **8 MiB of audio** per request. Video downloading, YouTub
 
 ## Persistence, recovery and synchronization
 
-Desktop data keeps the existing `transcribeChats` IndexedDB database. Hosted data uses one database per authenticated account. Signing out or switching accounts reloads the application before another workspace is opened.
+Desktop data and guest hosted data keep the existing `transcribeChats` IndexedDB database at their respective origins. Guests on different devices or browser profiles have separate data. Optional accounts use their own database. Signing out or switching accounts reloads the application before another workspace opens. No existing browser data is deleted or silently copied into an account.
 
-Older anonymous hosted browser data is preserved. After sign-in, use **Settings → Recover existing browser transcripts** only if those records belong to you. Recovery copies missing records, including recordings and study progress, without deleting the originals or copying old CRM credentials. Existing transcript IDs remain unchanged.
+Older anonymous hosted browser transcripts are accessible immediately as a guest. To copy them into an optional account, use **Settings → Recover existing browser transcripts** only if those records belong to you. Recovery preserves recordings, progress, IDs and originals, without copying old CRM credentials.
 
 Apply **only** `supabase/migrations/20261014124212_unified_records.sql` to an existing production project. It adds `transcribe_workspaces` and a separate private `transcribe-media` bucket; it does not replace existing profiles, library, billing or job tables. The older initial migration describes the legacy schema and must not be blindly applied over an unrelated existing project.
 
@@ -85,15 +84,15 @@ npm run test:e2e
 npm audit
 ```
 
-`check` runs ESLint, frontend/unit tests, Worker tests, TypeScript, the production Vite build and compiled-output validation. Browser tests use an isolated browser profile and synthetic data. Hosted tests require explicitly supplied disposable account fixtures; normal runs skip them. See the report for the tests actually executed against live services.
+`check` runs ESLint, frontend/unit tests, Worker tests, TypeScript, the production Vite build and compiled-output validation. Browser tests use isolated profiles and synthetic data. Run the guest journeys with `E2E_GUEST=true`, `E2E_BASE_URL` set to the hosted preview or production, and `E2E_AUDIO_FIXTURE` pointing to a synthetic WAV. Optional account-sync tests use `E2E_HOSTED=true` and disposable account fixtures. See [Cloudflare release notes](docs/CLOUDFLARE_RELEASE.md) for executed validation.
 
 Pages build settings: **build command `npm ci && npm run check`**, **output directory `dist`**, repository root. `wrangler.jsonc` also declares `dist` as the Pages output. SPA redirects preserve deep links, hashed assets get JavaScript/CSS MIME types, and the service worker must revalidate. Never publish the repository root: its `index.html` references TypeScript source.
 
-After the reviewed PR is merged, publish the exact `origin/main` commit with the public production environment loaded:
+Commit and push the hosted changes to `cloudflare`, then publish that exact `origin/cloudflare` commit with the public production environment loaded:
 
 ```powershell
 npm run deploy
 npm run verify:deployment
 ```
 
-The publisher rejects unmerged or dirty tracked code, checks dependencies and the compiled output, deploys the unified Worker, verifies Whisper/Gemini readiness, and publishes `dist`. It does not overwrite the legacy Worker or its secrets. `PUBLISH-CLOUDFLARE.cmd` is the Windows entrypoint.
+The publisher rejects code that differs from `origin/cloudflare` and dirty tracked changes, checks the compiled output, deploys the unified Worker, verifies guest Whisper/Gemini readiness, and publishes `dist` to the `cloudflare` production branch. It preserves the legacy Worker and its secrets. `PUBLISH-CLOUDFLARE.cmd` loads ignored local production overrides; without overrides use `node --env-file=.env.production scripts/publish.mjs`.

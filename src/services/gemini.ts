@@ -1,6 +1,6 @@
 import type { AnalysisResult, TranscriptSegment, Transcription } from '../domain/types';
 import { formatTimestamp } from '../lib/format';
-import { supabase } from './supabase';
+import { hostedAccessHeaders } from './hostedAccess';
 
 export type SummaryJobStatus = 'queued' | 'processing' | 'waiting' | 'ready' | 'failed';
 export interface SummaryJob {
@@ -23,13 +23,6 @@ function endpoint(): string {
   const base = import.meta.env.VITE_AI_API_URL?.trim() || import.meta.env.VITE_CLOUD_TRANSCRIBE_URL?.trim();
   if (!base) throw new Error('Gemini summaries require the hosted Cloudflare backend.');
   return base.replace(/\/$/, '') + '/v1/analyze';
-}
-
-async function authHeaders(): Promise<Record<string, string>> {
-  if (!supabase) throw new Error('Sign in through Settings before using Gemini.');
-  const { data, error } = await supabase.auth.getSession();
-  if (error || !data.session?.access_token) throw new Error('Sign in with a verified email before using Gemini.');
-  return { Authorization: 'Bearer ' + data.session.access_token };
 }
 
 async function readJob(response: Response, jobId: string): Promise<SummaryJob> {
@@ -57,7 +50,7 @@ export async function createGeminiSummaryJob(transcription: Transcription, segme
   if (transcript.length > 120_000) {
     throw new Error('This transcript exceeds the current 120,000-character limit. The text has not been truncated. Export to ChatGPT or divide it into separate recordings.');
   }
-  const headers = { ...(await authHeaders()), 'Content-Type': 'application/json', 'Idempotency-Key': jobId };
+  const headers = { ...(await hostedAccessHeaders()), 'Content-Type': 'application/json', 'Idempotency-Key': jobId };
   const response = await fetch(endpoint(), {
     method: 'POST', headers,
     body: JSON.stringify({ title: transcription.title, context: transcription.context || '', recordedAt: transcription.recordedAt, transcript, mode }),
@@ -68,7 +61,7 @@ export async function createGeminiSummaryJob(transcription: Transcription, segme
 
 export async function getGeminiSummaryJob(jobId: string): Promise<SummaryJob> {
   const response = await fetch(endpoint() + '/' + encodeURIComponent(jobId), {
-    headers: await authHeaders(),
+    headers: await hostedAccessHeaders(),
     signal: AbortSignal.timeout(15_000),
     cache: 'no-store'
   });

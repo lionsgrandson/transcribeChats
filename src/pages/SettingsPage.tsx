@@ -47,23 +47,22 @@ export function SettingsPage() {
       <Card className="settings-section">
         <div className="settings-heading"><span><HardDrive /></span><div><h2>Transcription engine</h2><p>{cloud ? 'Hosted Cloudflare Whisper API' : 'Local Python/Whisper engine'}</p></div></div>
         <div className="setting-row"><div><strong>{store.workerReady === true ? 'Engine is reachable' : store.workerReady === null ? 'Checking engine...' : 'Engine is unavailable'}</strong>
-          <span>{cloud ? 'Hosted transcription requires a verified account. Limit: 8 MiB audio per request.' : 'Local transcription requires the Python worker or Docker to be running.'}</span></div>
+          <span>{cloud ? 'Works in this browser without sign-in, Docker or a local worker. Limit: 8 MiB audio per request.' : 'Local transcription requires the Python worker or Docker to be running.'}</span></div>
           <Button variant="secondary" onClick={() => void store.refreshWorker()}><CheckCircle2 size={16} />Check</Button></div>
         {!cloud && <Field label="Local worker URL"><input value={store.settings.workerUrl} dir="ltr" onChange={(event) => void store.updateSettings({ workerUrl: event.target.value })} placeholder="http://localhost:8787" /></Field>}
       </Card>
       {supabaseConfigured && <Card className="settings-section">
-        <div className="settings-heading"><span><UserIcon /></span><div><h2>Account</h2><p>Cloud transcription requires confirmed-email sign-in.</p></div></div>
+        <div className="settings-heading"><span><UserIcon /></span><div><h2>Optional cloud sync account</h2><p>No account is needed to transcribe, analyze, manage tasks or use CRM. Sign in only to sync across devices.</p></div></div>
         {user ? <><p dir="auto">{user.email} {user.email_confirmed_at ? '(verified)' : '(not yet verified)'}</p>
           <div className="inline-actions"><Button variant="secondary" onClick={() => void signOut().then(() => setUser(null)).catch((reason) => setMessage(String(reason)))}>Sign out</Button>
             <Button variant="secondary" disabled={busy} onClick={() => { setBusy(true); void store.sync().then(() => setMessage('Sync completed.')).catch((reason) => setMessage(String(reason))).finally(() => setBusy(false)); }}><Cloud size={16} />Sync records</Button></div>
         </> : <div><Field label="Email"><input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" /></Field>
           <AuthChallenge onToken={setCaptchaToken} /><Button busy={busy} disabled={!email.trim() || Boolean(import.meta.env.VITE_TURNSTILE_SITE_KEY && !captchaToken)} onClick={() => void doSignIn()}>Email sign-in link</Button></div>}
       </Card>}
-      {!supabaseConfigured && cloud && <Card className="settings-section"><strong>Sign-in not configured.</strong><p>Set the Supabase public URL and publishable key in the frontend build before enabling the hosted transcription engine.</p></Card>}
       <Card className="settings-section"><div className="settings-heading"><span><Shield /></span><div><h2>Privacy and storage</h2></div></div>
-        <p>Original recordings and transcripts are saved in this browser's local IndexedDB. Cloud transcription uploads audio temporarily for model inference; the transcription API does not persist it. Signing in does not automatically synchronize stored records.</p>
+        <p>Recordings and transcripts are saved in this browser. Guest workspaces are separate on each device and browser profile; export a backup before clearing browser data. Cloud transcription uploads audio temporarily for inference. Gemini keeps a private analysis job temporarily while it runs. Signing in is optional and does not automatically synchronize stored records.</p>
         <p>Export your transcript before clearing browser data or uninstalling the app. Full synchronization is an explicit action.</p>
-        <label className="checkbox-field"><input type="checkbox" checked={Boolean(store.settings.syncAudio)} onChange={(event) => void store.updateSettings({ syncAudio: event.target.checked })} />Include recordings in manual cloud sync (up to 50 MiB each)</label>
+        {user && <label className="checkbox-field"><input type="checkbox" checked={Boolean(store.settings.syncAudio)} onChange={(event) => void store.updateSettings({ syncAudio: event.target.checked })} />Include recordings in manual cloud sync (up to 50 MiB each)</label>}
         <div className="workspace-actions"><Button variant="secondary" onClick={() => void localWorkspaceSnapshot('export').then((snapshot) => downloadWorkspaceSnapshot(snapshot)).catch((reason) => setMessage(String(reason)))}>Export workspace JSON</Button><Button variant="secondary" onClick={() => void db.syncBackups.orderBy('createdAt').last().then((backup) => { if (backup) downloadWorkspaceSnapshot(backup.payload, 'transcribechats-recovery.json'); else setMessage('No recovery snapshots are needed yet.'); }).catch((reason) => setMessage(String(reason)))}>Export latest recovery copy</Button></div>
         {db.name !== 'transcribeChats' && <Button variant="secondary" disabled={busy} onClick={() => {
           if (!window.confirm('Copy legacy transcripts, recordings and learning data from this browser into your account workspace? Continue only if these records belong to you. Existing account records and the original data will be preserved. CRM credentials will not be copied.')) return;
