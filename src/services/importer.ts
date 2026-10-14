@@ -68,7 +68,7 @@ function sameMeaning(
   const sharedSource = left.sourceSegmentIds.some((id) => right.sourceSegmentIds.includes(id));
   const sameOwner = Boolean(left.assignee && right.assignee && left.assignee === right.assignee);
   const sameDate = Boolean((left.dueAt && left.dueAt === right.dueAt) || (left.startsAt && left.startsAt === right.startsAt));
-  return similarity >= 0.78 || (sharedSource && similarity >= 0.45) || ((sameOwner || sameDate) && similarity >= 0.62);
+  return similarity >= 0.68 || (sharedSource && similarity >= 0.45) || ((sameOwner || sameDate) && similarity >= 0.58);
 }
 
 export function previewImport(
