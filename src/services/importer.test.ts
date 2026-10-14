@@ -36,15 +36,15 @@ describe('previewImport', () => {
     expect(result.valid[2].startsAt).toContain('2026-07-18');
   });
 
-  it('imports a top-level detailed analysis as one note', () => {
+  it('keeps top-level detailed analysis separate from structured items', () => {
     const result = previewImport(JSON.stringify({
       summary: 'Executive summary\n\nRequirements\n- Detailed requirement discussion.',
       items: [{ kind: 'task', title: 'Send the complete requirements list', sourceSegmentIds: ['s1'] }]
     }), []);
     expect(result.invalid).toEqual([]);
-    expect(result.valid).toHaveLength(2);
-    expect(result.valid[0]).toMatchObject({ kind: 'note', title: 'Detailed meeting analysis' });
-    expect(result.valid[0].body).toContain('Executive summary');
+    expect(result.summary).toContain('Executive summary');
+    expect(result.valid).toHaveLength(1);
+    expect(result.valid[0]).toMatchObject({ kind: 'task', title: 'Send the complete requirements list' });
   });
 
   it('merges differently worded versions of the same sourced task', () => {
