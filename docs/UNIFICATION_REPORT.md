@@ -67,7 +67,7 @@ Supabase security advisors reported no findings on the new table or policies. Ex
 | Cloudflare Worker tests | 17 passed, including authentication, account/job isolation, CORS, rate limits, retries, schema validation and idempotent queue handling |
 | Python unit tests | 32 passed in the final-source CUDA validation container |
 | Python dependency consistency | `pip check` passed |
-| Desktop browser tests | 5 passed before the final calendar regression test was added; final rerun pending |
+| Desktop browser tests | 6 passed, including dated calendar editing, persistence and Hebrew mobile rendering |
 | Hosted browser tests | 4 passed against the compiled hosted build and live Worker/Supabase: sign-in gate, real audio/Gemini, cloud restore, cross-account and RLS rejection |
 | Real local CUDA transcription | WAV: ready with 3 timestamped segments; MP4: ready with transcript; RTX 4060 GPU memory/utilization observed |
 | Real local Ollama | Explicit-provider HTTP 200; summary and 3 follow-ups returned |

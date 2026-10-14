@@ -24,6 +24,10 @@ test('verified hosted account transcribes real synthetic audio, analyzes with Ge
   test.setTimeout(120_000);
   await authorize(context, identities()[0]);
   const requests: string[] = []; page.on('request', (request) => requests.push(request.url()));
+  // Reusable fixtures may already have a cloud workspace from a previous run.
+  await page.goto('/settings');
+  await page.getByRole('button', { name: 'Sync records', exact: true }).click();
+  await expect(page.getByText('Sync completed.', { exact: true })).toBeVisible({ timeout: 20_000 });
   await page.goto('/new?mode=upload');
   await page.getByLabel('Title', { exact: true }).fill('Hosted synthetic validation');
   await page.locator('input[type=file]').setInputFiles('.audit/validation.wav');
@@ -47,8 +51,8 @@ test('new browser restores cloud transcripts while another account cannot see th
   await page.getByRole('button', { name: 'Sync records', exact: true }).click();
   await expect(page.getByText('Sync completed.', { exact: true })).toBeVisible({ timeout: 20_000 });
   await page.goto('/history');
-  await expect(page.getByText('Hosted synthetic validation', { exact: true })).toBeVisible();
-  const recordUrl = await page.getByRole('link', { name: /Hosted synthetic validation/ }).getAttribute('href');
+  await expect(page.getByText('Hosted synthetic validation', { exact: true }).first()).toBeVisible();
+  const recordUrl = await page.getByRole('link', { name: /Hosted synthetic validation/ }).first().getAttribute('href');
   const other = await browser.newContext({ baseURL: process.env.E2E_BASE_URL });
   await authorize(other, identities()[1]);
   const otherPage = await other.newPage();

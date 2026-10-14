@@ -231,4 +231,3 @@ Recovery tags retain every original branch head. After review, history-only merg
 - `95a5eb2 Scope colorful transcription detail layout styles`
 
 </details>
-
