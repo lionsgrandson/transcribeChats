@@ -208,8 +208,8 @@ async def analyze_transcript(request: AnalysisRequest) -> Analysis:
     try:
         return await analyze_segments(request.segments, reference, request.context[:4000], request.provider)
     except Exception as error:
-        logger.exception("Ollama analysis failed")
-        raise HTTPException(status_code=502, detail=f"Ollama analysis failed: {error}") from error
+        logger.exception("Analysis failed for provider %s", request.provider)
+        raise HTTPException(status_code=502, detail=f"{request.provider.title()} analysis failed: {error}") from error
 
 
 

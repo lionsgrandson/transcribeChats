@@ -18,7 +18,7 @@ Copy-Item .env.example .env.local
 npm start
 ```
 
-The launcher starts the local services and the frontend at **http://localhost:4173**. Keep `VITE_CLOUD_TRANSCRIBE_URL` and `VITE_RUNTIME_MODE` blank for this desktop configuration. Set the worker's private `GEMINI_API_KEY` in an ignored `.env` file to enable Gemini through the local engine; it is never bundled into the frontend. Ollama actions explicitly request Ollama and do not silently send content to Gemini.
+The launcher starts the local services and the frontend at **http://localhost:4173**. Keep `VITE_CLOUD_TRANSCRIBE_URL` and `VITE_RUNTIME_MODE` blank for this desktop configuration. Set the worker's private `GEMINI_API_KEY` in an ignored `.env` file to enable Gemini through the local engine; it is never bundled into the frontend. The tested default is `GEMINI_MODEL=gemini-3.5-flash-lite`; an existing environment override takes precedence. Ollama actions explicitly request Ollama and do not silently send content to Gemini.
 
 For an existing worker, or text-only/offline development:
 

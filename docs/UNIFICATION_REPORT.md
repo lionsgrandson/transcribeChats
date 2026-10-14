@@ -67,10 +67,11 @@ Supabase security advisors reported no findings on the new table or policies. Ex
 | Cloudflare Worker tests | 17 passed, including authentication, account/job isolation, CORS, rate limits, retries, schema validation and idempotent queue handling |
 | Python unit tests | 32 passed in the final-source CUDA validation container |
 | Python dependency consistency | `pip check` passed |
-| Desktop browser tests | 6 passed, including dated calendar editing, persistence and Hebrew mobile rendering |
+| Desktop browser tests | 6 passed, including dated calendar editing, persistence and Hebrew mobile rendering; 1 additional simulated microphone failure/reload/retry test passed |
 | Hosted browser tests | 4 passed against the compiled hosted build and live Worker/Supabase: sign-in gate, real audio/Gemini, cloud restore, cross-account and RLS rejection |
 | Real local CUDA transcription | WAV: ready with 3 timestamped segments; MP4: ready with transcript; RTX 4060 GPU memory/utilization observed |
 | Real local Ollama | Explicit-provider HTTP 200; summary and 3 follow-ups returned |
+| Real local Gemini | Explicit-provider HTTP 200 with summary and 3 follow-ups on the tested 3.5 Flash-Lite model. The prior 3.8 override returned upstream 503; defaults were aligned with the verified hosted model |
 | Real hosted Whisper | HTTP 200; 3 timestamped segments from synthetic speech |
 | Real hosted Gemini | Durable submission HTTP 202, polling reached ready with structured task/takeaway output |
 | CRM | Contract inspection, adapter/unit tests and mocked-provider browser success/failure flows passed; live user-workspace confirmation unavailable |
@@ -82,7 +83,7 @@ The first full CUDA image build succeeded. A subsequent clean dependency downloa
 
 ## Release references and deployment
 
-Implementation commit: `41a7e4d`, followed by validation and publishing fixes. Consolidation PR, final merge, production deployment and branch-cleanup results will be recorded after verification.
+Implementation commit: `41a7e4d`, followed by validation and publishing fixes. Consolidation PR: https://github.com/lionsgrandson/transcribeChats/pull/16. All branch histories were retained by integration commit `442369a`. Final merge, production deployment and branch-cleanup results will be recorded after verification.
 
 The unified Worker was provisioned as `transcribechats-unified`; its health reports both transcription and Gemini ready. The independently deployed legacy `transcribechats-whisper` had D1/R2/queue functionality absent from every repository branch. Its deployed source/configuration were saved locally for recovery, and its service, data, bindings and secrets were preserved. The new frontend uses the unified Worker.
 
