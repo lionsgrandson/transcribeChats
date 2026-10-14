@@ -43,9 +43,9 @@ For hosted development and publishing, check out [the cloudflare branch](https:/
 
 ## Persistence, recovery and synchronization
 
-Desktop data keeps the existing `transcribeChats` IndexedDB database. Hosted data uses one database per authenticated account. Signing out or switching accounts reloads the application before another workspace is opened.
+Desktop data keeps the existing `transcribeChats` IndexedDB database. On the hosted branch, guests use browser-local storage at the production origin; optional signed-in accounts use separate private databases. Signing out or switching accounts reloads the application before another workspace opens.
 
-Older anonymous hosted browser data is preserved. After sign-in, use **Settings → Recover existing browser transcripts** only if those records belong to you. Recovery copies missing records, including recordings and study progress, without deleting the originals or copying old CRM credentials. Existing transcript IDs remain unchanged.
+Older anonymous hosted browser data opens directly as a guest. Optional **Settings → Recover existing browser transcripts** copies records into a signed-in account only after ownership confirmation. It preserves recordings, progress, IDs and originals, without copying old CRM credentials.
 
 Apply **only** `supabase/migrations/20261014124212_unified_records.sql` to an existing production project. It adds `transcribe_workspaces` and a separate private `transcribe-media` bucket; it does not replace existing profiles, library, billing or job tables. The older initial migration describes the legacy schema and must not be blindly applied over an unrelated existing project.
 
