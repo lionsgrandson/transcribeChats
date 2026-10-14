@@ -85,15 +85,12 @@ export function previewImport(
   const parsedSummary = typeof parsed === 'object' && parsed !== null && 'summary' in parsed && typeof (parsed as { summary?: unknown }).summary === 'string'
     ? (parsed as { summary: string }).summary.trim()
     : '';
-  const rawValues = Array.isArray(parsed)
+  const values = Array.isArray(parsed)
     ? parsed
     : typeof parsed === 'object' && parsed !== null && 'items' in parsed
       ? (parsed as { items: unknown }).items
       : [];
-  if (!Array.isArray(rawValues)) return { valid: [], invalid: ['Expected an items array.'], duplicates: [] };
-  const values = parsedSummary
-    ? [{ kind: 'summary', title: 'Detailed meeting analysis', body: parsedSummary, status: 'open', priority: 'none', sourceSegmentIds: [], confidence: 1, confirmed: false }, ...rawValues]
-    : rawValues;
+  if (!Array.isArray(values)) return { summary: parsedSummary || undefined, valid: [], invalid: ['Expected an items array.'], duplicates: [] };
 
   const valid: ImportPreview['valid'] = [];
   const invalid: string[] = [];
@@ -128,5 +125,5 @@ export function previewImport(
       valid.push(normalized);
     }
   });
-  return { valid, invalid, duplicates };
+  return { summary: parsedSummary || undefined, valid, invalid, duplicates };
 }
