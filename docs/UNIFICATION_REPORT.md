@@ -16,7 +16,7 @@ All 15 remote branches, including main, were fetched. [BRANCH_AUDIT.md](BRANCH_A
 
 Obsolete transcription-only navigation, old deployment commands and a previously removed runner workflow are intentionally superseded. Recovery tags use `archive/unification-20261014/<original-branch>`. History-only merge parents retain reconciled original commits while preserving the reviewed final tree.
 
-Branch deletion is deferred until final verification, recovery tags, unchanged remote heads, protection/deployment checks and the consolidation merge are confirmed. Main is never deleted.
+After production verification and the consolidation merge, all 14 audited non-main remote branches were deleted. Every remote head still matched the audit, every branch was unprotected with no open PR, all original commits were ancestors of main, and remote annotated recovery tags were verified. Cloudflare production uses main and preview deployments are disabled. The temporary integration branch was also archived as `archive/unification-20261014/integration` and deleted. Only main remains locally and remotely; the validation worktree is retained detached for its ignored QA artifacts. No original feature history was discarded.
 
 ## CRM contract and implementation
 
@@ -30,7 +30,7 @@ The shared adapter supports:
 
 Unverified generic CRM providers are rejected until an adapter implements their actual authorization/API contract. No CodeCrafterCRM source changes were required.
 
-Automated browser tests exercise the real frontend against controlled CRM contract responses, including success, authorization rejection, project mapping and fragment confirmation semantics. A live import into the user's CRM was not confirmed: the connected Chrome browser became unavailable during that check. This is not reported as a successful external import.
+Automated browser tests exercise the real frontend against controlled CRM contract responses, including success, authorization rejection, project mapping and fragment confirmation semantics. After Chrome was reconnected, a live fragment import was confirmed in the user's CodeCrafter workspace. The clearly labeled synthetic task `[Validation] TranscribeChats CRM import - 2026-10-14` saved as General/unassigned, survived reload, and was marked Done. Attempting to save the same stable source ID again displayed `This transcribed task is already in the CRM.` No existing CRM task was modified. The synthetic completed task remains as an audit receipt. Workspace API flows were contract-tested with controlled responses; a live API-token import was not claimed.
 
 ## Persistence, migrations and security
 
@@ -41,6 +41,8 @@ The connected production Supabase project also serves StudentTranscribe. Its exi
 Explicit cloud sync uses revisions and canonical JSON digests. A concurrent edit stops with an error and recovery export instead of overwriting either version. Pre-restore local snapshots are retained. Audio sync is separately opt-in, limited to 50 MiB per file, and never removes local originals. Credentials/preferences are excluded from snapshots.
 
 The existing Supabase CAPTCHA protection is preserved and the frontend now supplies Turnstile tokens. Existing authentication URLs and the StudentTranscribe site URL were preserved; exact/slash production and local application callback URLs were added. Disposable verified test identities were used without sending sign-in emails or changing CAPTCHA settings.
+
+After production tests, exactly the two verified disposable identities and their own workspace records were removed. Existing project counts returned to 8 profiles and 137 library items, matching the pre-test baseline. Transient local service-role/session fixtures were removed; user data and existing storage were preserved.
 
 Supabase security advisors reported no findings on the new table or policies. Existing project-wide findings remain outside this change: server-only tables with RLS and no public policies, and disabled leaked-password protection. No unrelated security or billing configuration was changed.
 
@@ -68,13 +70,13 @@ Supabase security advisors reported no findings on the new table or policies. Ex
 | Python unit tests | 32 passed in the final-source CUDA validation container |
 | Python dependency consistency | `pip check` passed |
 | Desktop browser tests | 6 passed, including dated calendar editing, persistence and Hebrew mobile rendering; 1 additional simulated microphone failure/reload/retry test passed |
-| Hosted browser tests | 4 passed against the compiled hosted build and live Worker/Supabase: sign-in gate, real audio/Gemini, cloud restore, cross-account and RLS rejection |
+| Hosted browser tests | 4 passed against the compiled hosted build and repeated successfully on the production domain with live Worker/Supabase: sign-in gate, real audio/Gemini, cloud restore, cross-account and RLS rejection |
 | Real local CUDA transcription | WAV: ready with 3 timestamped segments; MP4: ready with transcript; RTX 4060 GPU memory/utilization observed |
 | Real local Ollama | Explicit-provider HTTP 200; summary and 3 follow-ups returned |
 | Real local Gemini | Explicit-provider HTTP 200 with summary and 3 follow-ups on the tested 3.5 Flash-Lite model. The prior 3.8 override returned upstream 503; defaults were aligned with the verified hosted model |
 | Real hosted Whisper | HTTP 200; 3 timestamped segments from synthetic speech |
 | Real hosted Gemini | Durable submission HTTP 202, polling reached ready with structured task/takeaway output |
-| CRM | Contract inspection, adapter/unit tests and mocked-provider browser success/failure flows passed; live user-workspace confirmation unavailable |
+| CRM | Contract inspection, adapter/unit tests and mocked-provider browser success/failure flows passed; live browser-fragment import, persistence and duplicate rejection confirmed in the user's workspace |
 | Hebrew/mobile | 390px RTL navigation and all workspace routes passed overflow checks |
 | Export and persistence | TXT browser download, PDF unit coverage, edited speaker/text and notes after reload, direct transcript URL tested |
 | Secret scan and npm audit | Passed; zero npm vulnerabilities |
@@ -83,11 +85,13 @@ The first full CUDA image build succeeded. A subsequent clean dependency downloa
 
 ## Release references and deployment
 
-Implementation commit: `41a7e4d`, followed by validation and publishing fixes. Consolidation PR: https://github.com/lionsgrandson/transcribeChats/pull/16. All branch histories were retained by integration commit `442369a`. Final merge, production deployment and branch-cleanup results will be recorded after verification.
+Implementation commit: `41a7e4d`, followed by `9320648`, `442369a`, `794bbf4` and final code commit `d556b9e`. Consolidation PR: https://github.com/lionsgrandson/transcribeChats/pull/16, merged normally into main as `a4aed0be0bb09fdbb51388c38b285604b18b38b1` on 2026-10-14. All branch histories were retained by integration commit `442369a`. No force push or shared-history rewrite was used.
 
 The unified Worker was provisioned as `transcribechats-unified`; its health reports both transcription and Gemini ready. The independently deployed legacy `transcribechats-whisper` had D1/R2/queue functionality absent from every repository branch. Its deployed source/configuration were saved locally for recovery, and its service, data, bindings and secrets were preserved. The new frontend uses the unified Worker.
 
-Production Pages rollout is pending merge. An authenticated hosted browser build has already been tested locally against live backend services. Deployment is not claimed until HTTP assets, deep links, authentication and workflows are checked at the production domain.
+Production https://transcribe-chats.pages.dev/ was deployed from the merged main commit as Pages deployment `7aa9addf-675a-490a-a7a7-772c7af8288b` (successful). The Pages project is connected to `lionsgrandson/transcribeChats`, production branch main, build `npm ci && npm run check`, output `dist`, Node 22.23.2 and the verified public hosted environment. The unified Worker release is `b7705e6f-8cd0-4a98-a62c-5ccdb69bd909`, with AI, rate-limit and durable-job bindings and private Gemini configuration verified ready. Deployment checks passed for the homepage, all eight workspace routes, a transcript deep link, compiled JavaScript MIME/status and service-worker cache headers. All four authenticated hosted workflow tests then passed at the production domain, including real speech/Gemini and account isolation.
+
+The original desktop checkout was fast-forwarded to main. Its idle Python worker was upgraded to the final-source validated image, preserving its existing model volume, credentials and local preferences. Readiness confirms CUDA, large-v3 and available pyannote. The temporary validation container was removed. The local frontend runs from the canonical main checkout at http://localhost:4173. The separate ignored validation worktree holds QA artifacts only.
 
 ## Limits and remaining configuration
 
@@ -96,5 +100,5 @@ Production Pages rollout is pending merge. An authenticated hosted browser build
 - Whisper retry needs this browser reopened; Gemini accepted jobs use durable server alarms with bounded retries and expiry. Provider quotas remain authoritative.
 - Audio cloud sync is opt-in and limited to 50 MiB per file. Cross-device concurrent edits require explicit reconciliation using local/recovery exports.
 - Legacy anonymous hosted data requires explicit ownership confirmation before recovery. This avoids exposing another person's browser data after account switching.
-- No physical microphone recording, live public YouTube download or real CRM workspace import has been claimed as passed. Automated capture/layout/contract tests and synthetic audio/video inference cover the executed paths.
+- No physical microphone recording or live public YouTube download has been claimed as passed. Automated capture/layout/contract tests, a confirmed real CRM browser import and synthetic audio/video inference cover the executed paths. Hosted authentication tests used disposable verified-email token exchange; no real user's email delivery or interactive CAPTCHA challenge was automated.
 - A repeat clean Docker build should be retried when the upstream wheel-download integrity failure is resolved; the final-source GPU runtime itself was verified.
