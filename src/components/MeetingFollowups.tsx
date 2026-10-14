@@ -85,6 +85,6 @@ export function MeetingFollowups({ transcription }: { transcription: Transcripti
     {!items.length && <p className="muted">{he ? 'עדיין אין פריטים. הוסיפו פריט או בחרו כלי ניתוח.' : 'No follow-ups yet. Add an item or choose an analysis tool.'}</p>}
     <h3>{he ? 'הערות אישיות' : 'Personal notes'}</h3>{store.tNotes(transcription.id).map((value) => <p key={value.id} dir="auto">{value.body}</p>)}
     <form className="workspace-actions" onSubmit={(event) => { event.preventDefault(); void run(async () => { await store.addNote(transcription.id, note.trim()); setNote(''); }); }}><Field label={he ? 'הערה חדשה' : 'New note'}><textarea value={note} onChange={(event) => setNote(event.target.value)} dir="auto" /></Field><Button type="submit" disabled={!note.trim() || busy}>Save note</Button></form>
-    <ChatGptModal open={chatOpen} onClose={() => setChatOpen(false)} transcription={transcription} segments={store.tSegments(transcription.id)} items={items} onImport={(values) => store.importItems(transcription.id, values)} />
+    <ChatGptModal open={chatOpen} onClose={() => setChatOpen(false)} transcription={transcription} segments={store.tSegments(transcription.id)} items={items} onImport={(values, summary) => store.importItems(transcription.id, values, summary)} />
   </Card>;
 }

@@ -40,6 +40,18 @@ describe('persisted task mutations', () => {
     expect(await db.settings.get('settings')).toMatchObject({ locale: 'he', crmBaseUrl: 'https://crm.example/' });
     expect(document.documentElement.dir).toBe('rtl');
   });
+  it('imports ChatGPT analysis and items together', async () => {
+    const { result } = renderHook(useAppStore, { wrapper: AppStoreProvider });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const value = {
+      kind: 'task' as const, title: 'Send requirements', status: 'needs_review' as const,
+      priority: 'medium' as const, tags: [], sourceSegmentIds: ['s1'], confidence: .9, confirmed: false
+    };
+    await act(async () => { await result.current.importItems('t1', [value], 'Detailed meeting analysis'); });
+    expect((await db.transcriptions.get('t1'))?.summary).toBe('Detailed meeting analysis');
+    expect(await db.items.where('transcriptionId').equals('t1').filter((item) => item.title === 'Send requirements').count()).toBe(1);
+  });
+
   it('applies a Gemini job once and never auto-accepts its tasks or dates', async () => {
     await db.transcriptions.update('t1', { summaryJobId: 'job1' });
     const { result } = renderHook(useAppStore, { wrapper: AppStoreProvider });

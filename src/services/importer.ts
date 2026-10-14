@@ -14,7 +14,7 @@ const optionalDateSchema = z.preprocess(normalizeOptionalDate, z.string().option
 const importItemSchema = z.object({
   kind: z.enum(['task', 'event', 'note', 'takeaway', 'summary']),
   title: z.string().min(1).max(300),
-  body: z.string().max(5000).optional(),
+  body: z.string().max(50000).optional(),
   status: z.enum(['needs_review', 'open', 'completed', 'dismissed']).default('needs_review'),
   priority: z.enum(['none', 'low', 'medium', 'high', 'urgent']).default('none'),
   assignee: z.string().max(200).optional().nullable().transform((value) => value || undefined),
@@ -35,6 +35,42 @@ function extractJson(value: string): unknown {
   return JSON.parse(candidate.trim());
 }
 
+const duplicateNoise = new Set([
+  'the','a','an','to','of','and','for','with','on','in','at','from','by','please','need','needs','will',
+  'את','של','על','עם','ו','או','צריך','צריכה','צריכים','יש','נא','בבקשה','כדי','לגבי'
+]);
+
+function semanticTokens(value: string): Set<string> {
+  return new Set(value.toLocaleLowerCase().normalize('NFKC')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1 && !duplicateNoise.has(token)));
+}
+
+function containmentSimilarity(left: string, right: string): number {
+  const a = semanticTokens(left);
+  const b = semanticTokens(right);
+  if (!a.size || !b.size) return 0;
+  let common = 0;
+  for (const token of a) if (b.has(token)) common += 1;
+  return common / Math.min(a.size, b.size);
+}
+
+function sameMeaning(
+  left: Pick<ExtractedItem, 'kind' | 'title' | 'body' | 'assignee' | 'dueAt' | 'startsAt' | 'sourceSegmentIds'>,
+  right: Pick<ExtractedItem, 'kind' | 'title' | 'body' | 'assignee' | 'dueAt' | 'startsAt' | 'sourceSegmentIds'>
+): boolean {
+  if (left.kind !== right.kind) return false;
+  const leftText = `${left.title} ${left.body || ''}`;
+  const rightText = `${right.title} ${right.body || ''}`;
+  const similarity = containmentSimilarity(leftText, rightText);
+  const sharedSource = left.sourceSegmentIds.some((id) => right.sourceSegmentIds.includes(id));
+  const sameOwner = Boolean(left.assignee && right.assignee && left.assignee === right.assignee);
+  const sameDate = Boolean((left.dueAt && left.dueAt === right.dueAt) || (left.startsAt && left.startsAt === right.startsAt));
+  return similarity >= 0.68 || (sharedSource && similarity >= 0.45) || ((sameOwner || sameDate) && similarity >= 0.58);
+}
+
 export function previewImport(
   raw: string,
   existing: ExtractedItem[]
@@ -46,12 +82,15 @@ export function previewImport(
     return { valid: [], invalid: ['The pasted content is not valid JSON.'], duplicates: [] };
   }
 
+  const parsedSummary = typeof parsed === 'object' && parsed !== null && 'summary' in parsed && typeof (parsed as { summary?: unknown }).summary === 'string'
+    ? (parsed as { summary: string }).summary.trim()
+    : '';
   const values = Array.isArray(parsed)
     ? parsed
     : typeof parsed === 'object' && parsed !== null && 'items' in parsed
       ? (parsed as { items: unknown }).items
       : [];
-  if (!Array.isArray(values)) return { valid: [], invalid: ['Expected an items array.'], duplicates: [] };
+  if (!Array.isArray(values)) return { summary: parsedSummary || undefined, valid: [], invalid: ['Expected an items array.'], duplicates: [] };
 
   const valid: ImportPreview['valid'] = [];
   const invalid: string[] = [];
@@ -69,11 +108,22 @@ export function previewImport(
       status: normalizedKind === 'note' || normalizedKind === 'takeaway' ? 'open' as const : result.data.status,
       priority: result.data.kind === 'summary' ? 'none' as const : result.data.priority
     };
-    const duplicate = existing.some((item) =>
-      item.kind === normalized.kind && item.title.trim().toLowerCase() === normalized.title.trim().toLowerCase()
-    );
-    if (duplicate || valid.some((item) => item.kind === normalized.kind && item.title.trim().toLowerCase() === normalized.title.trim().toLowerCase())) duplicates.push(normalized.title);
-    else valid.push(normalized);
+    const existingDuplicate = existing.some((item) => sameMeaning(item, normalized));
+    const incomingIndex = valid.findIndex((item) => sameMeaning(item as ExtractedItem, normalized));
+    if (existingDuplicate) {
+      duplicates.push(normalized.title);
+    } else if (incomingIndex >= 0) {
+      const current = valid[incomingIndex];
+      valid[incomingIndex] = {
+        ...current,
+        body: (normalized.body || '').length > (current.body || '').length ? normalized.body : current.body,
+        sourceSegmentIds: [...new Set([...current.sourceSegmentIds, ...normalized.sourceSegmentIds])],
+        confidence: Math.max(current.confidence, normalized.confidence)
+      };
+      duplicates.push(normalized.title);
+    } else {
+      valid.push(normalized);
+    }
   });
-  return { valid, invalid, duplicates };
+  return { summary: parsedSummary || undefined, valid, invalid, duplicates };
 }

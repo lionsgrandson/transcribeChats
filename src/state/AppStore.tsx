@@ -42,7 +42,7 @@ interface AppStoreValue {
   deleteItem: (id: string) => Promise<void>;
   deleteItems: (ids: string[]) => Promise<void>;
   addItem: (transcriptionId: string, item: Partial<ExtractedItem> & Pick<ExtractedItem, 'kind' | 'title'>) => Promise<void>;
-  importItems: (transcriptionId: string, values: AnalysisResult['items']) => Promise<void>;
+  importItems: (transcriptionId: string, values: AnalysisResult['items'], summary?: string) => Promise<void>;
   applyGeminiAnalysis: (transcriptionId: string, jobId: string, analysis: AnalysisResult) => Promise<void>;
   addNote: (transcriptionId: string, body: string) => Promise<void>;
   deleteTranscription: (id: string) => Promise<void>;
@@ -418,11 +418,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     });
     await reload();
   }, [reload]);
-  const importItems = useCallback(async (transcriptionId: string, values: AnalysisResult['items']) => {
+  const importItems = useCallback(async (transcriptionId: string, values: AnalysisResult['items'], summary?: string) => {
     const created = makeItems(transcriptionId, values.length ? { summary: '', items: values } : { summary: '', items: [] });
-    if (created.length) await db.items.bulkAdd(created);
+    const detailedAnalysis = summary?.trim();
+    await db.transaction('rw', db.transcriptions, db.items, async () => {
+      if (created.length) await db.items.bulkAdd(created);
+      if (detailedAnalysis) await db.transcriptions.update(transcriptionId, {
+        summary: detailedAnalysis, updatedAt: new Date().toISOString(), synced: false
+      });
+    });
     await reload();
-    showToast(`${created.length} items imported.`);
+    showToast(detailedAnalysis ? `${created.length} items imported and detailed analysis saved.` : `${created.length} items imported.`);
   }, [reload, showToast]);
   const applyGeminiAnalysis = useCallback(async (transcriptionId: string, jobId: string, analysis: AnalysisResult) => {
     const preview = previewImport(JSON.stringify({ items: analysis.items }), []);

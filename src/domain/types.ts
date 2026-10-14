@@ -123,6 +123,7 @@ export interface AnalysisResult {
 }
 
 export interface ImportPreview {
+  summary?: string;
   valid: Array<Omit<ExtractedItem, 'id' | 'transcriptionId' | 'createdAt' | 'updatedAt'>>;
   invalid: string[];
   duplicates: string[];
