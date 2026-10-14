@@ -2,6 +2,8 @@
 
 Date: 2026-10-14 (Asia/Jerusalem). Integration baseline: `ca82ed3`.
 
+**Subsequent user-requested branch split:** This is the historical initial unification report. `main` now remains the localhost/desktop application, while the separate [cloudflare branch](https://github.com/lionsgrandson/transcribeChats/tree/cloudflare) owns the hosted release. Hosted access no longer requires sign-in or Docker. See that branch's `docs/CLOUDFLARE_RELEASE.md` for current hosted behavior and verification. The initial branch-cleanup statements below describe the earlier release, before the user requested this split.
+
 ## Scope and architecture
 
 A single React application now exposes transcription, tasks, calendar, Study Library, conversation audits and Sales Intelligence. Specialized workflows have separate navigation sections. The existing desktop/Python implementation remains the functional foundation; Cloudflare transcription and durable Gemini queues remain shared provider implementations behind the same store and pages.

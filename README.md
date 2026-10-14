@@ -1,9 +1,9 @@
 # TranscribeChats
 
-One React/PWA application for Hebrew and English transcription, meeting follow-ups, tasks, calendar, learning and conversation review. `main` is the canonical development branch.
+React/PWA for Hebrew and English transcription, meeting follow-ups, tasks, calendar, learning and conversation review. **`main` is the localhost/desktop application. The separate `cloudflare` branch is the hosted web app.**
 
 - **Desktop:** Python Faster-Whisper on NVIDIA CUDA, audio/video import, optional pyannote speaker separation, explicit Ollama or Gemini analysis, offline IndexedDB storage.
-- **Hosted:** verified Supabase accounts, Cloudflare Workers AI speech-to-text, server-side Gemini jobs with durable retries, account-isolated browser storage and optional cloud sync. Hosted pages do not contact localhost services.
+- **Hosted (`cloudflare`):** open https://transcribe-chats.pages.dev/ without signing in, installing Docker or running Python. Cloudflare handles speech and Gemini. See the [hosted branch setup](https://github.com/lionsgrandson/transcribeChats/tree/cloudflare).
 - **Shared:** editable transcript text and speaker labels, timestamp playback, searchable history, TXT/PDF/CSV exports, tasks with bulk actions, calendar, personal notes, CodeCrafter CRM, ChatGPT export/import, courses and interactive quizzes.
 
 See [implementation and verification report](docs/UNIFICATION_REPORT.md) and [branch reconciliation](docs/BRANCH_AUDIT.md).
@@ -35,27 +35,11 @@ docker cp services/worker_python/tests transcribechats-transcription-worker-1:/a
 docker exec transcribechats-transcription-worker-1 python -m unittest discover -s /app/tests
 ```
 
-## Hosted setup
+## Cloudflare web app
 
-The production application is **https://transcribe-chats.pages.dev/**. The Pages project is linked to `lionsgrandson/transcribeChats`, production branch `main`.
+Cloudflare Pages production follows **`cloudflare`**, not `main`. The hosted app runs directly in the browser with Cloudflare Workers AI and Gemini; it does not need sign-in, Docker or localhost services. Guest records stay in the browser, and account sync is optional.
 
-Set these **public** production build variables in Pages, or in an ignored `.env.production.local` for manual publishing:
-
-```dotenv
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=your-publishable-or-anon-key
-VITE_CLOUD_TRANSCRIBE_URL=https://transcribechats-unified.your-account.workers.dev
-VITE_RUNTIME_MODE=hosted
-VITE_TURNSTILE_SITE_KEY=your-public-site-key
-```
-
-Configure Supabase email authentication and allow the production origin in its redirect URLs. If CAPTCHA protection is enabled, supply the public Turnstile key and allow the application domain in the widget. Never disable CAPTCHA just to make a login test pass.
-
-The Worker in `wrangler.transcribe.jsonc` requires `AI`, `RATE_LIMITER`, `GEMINI_RATE_LIMITER`, and the `GEMINI_JOBS` SQLite Durable Object binding. Private Worker secrets are `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` and `ALLOWED_ORIGIN`. Provision with `scripts/configure-hosted.mjs` only after loading trusted environment values; do not commit those files or put AI keys, Supabase secret/service-role keys, or Cloudflare tokens in `VITE_*`.
-
-The new Worker name preserves an independently deployed legacy `transcribechats-whisper` service and its existing D1/R2/queue data. Do not remove that service as part of Git branch cleanup.
-
-Hosted Whisper accepts **8 MiB of audio** per request. Video downloading, YouTube/yt-dlp, acoustic diarization and Ollama use the desktop engine. Hosted study and conversation workspaces save source material and support ChatGPT structured import, quizzes and progress. Gemini meeting analysis is available on the transcript. These limitations are shown in the interface.
+For hosted development and publishing, check out [the cloudflare branch](https://github.com/lionsgrandson/transcribeChats/tree/cloudflare) in a separate checkout and follow its README. Its public hosted defaults live in `.env.production`. This desktop branch deliberately blocks production publishing.
 
 ## Persistence, recovery and synchronization
 
@@ -89,11 +73,4 @@ npm audit
 
 Pages build settings: **build command `npm ci && npm run check`**, **output directory `dist`**, repository root. `wrangler.jsonc` also declares `dist` as the Pages output. SPA redirects preserve deep links, hashed assets get JavaScript/CSS MIME types, and the service worker must revalidate. Never publish the repository root: its `index.html` references TypeScript source.
 
-After the reviewed PR is merged, publish the exact `origin/main` commit with the public production environment loaded:
-
-```powershell
-npm run deploy
-npm run verify:deployment
-```
-
-The publisher rejects unmerged or dirty tracked code, checks dependencies and the compiled output, deploys the unified Worker, verifies Whisper/Gemini readiness, and publishes `dist`. It does not overwrite the legacy Worker or its secrets. `PUBLISH-CLOUDFLARE.cmd` is the Windows entrypoint.
+Publish the website from the `cloudflare` branch only. `npm run deploy` on main exits before contacting Cloudflare. Keep local worker, CUDA, video and Ollama changes on main.
