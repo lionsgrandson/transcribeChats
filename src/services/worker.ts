@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { hostedRuntime, requireLocalWorker } from './runtime';
 import type { AnalysisResult, LanguageMode, TranscriptSegment } from '../domain/types';
 import { supabase } from './supabase';
 
@@ -91,6 +92,7 @@ export async function transcribeWithWorker(
       analysis: (parsed.analysis ?? undefined) as AnalysisResult | undefined
     };
   }
+  requireLocalWorker();
   const baseUrl = workerUrl.replace(/\/$/, '');
   let jobId = existingJobId;
   if (!jobId) {
@@ -150,6 +152,7 @@ export async function transcribeWithWorker(
 }
 
 export async function checkWorker(workerUrl: string): Promise<boolean> {
+  if (hostedRuntime && !import.meta.env.VITE_CLOUD_TRANSCRIBE_URL) return false;
   try {
     const url = import.meta.env.VITE_CLOUD_TRANSCRIBE_URL?.trim() || workerUrl;
     const response = await fetch(`${url.replace(/\/$/, '')}/health/ready`, { signal: AbortSignal.timeout(3000) });
@@ -160,10 +163,12 @@ export async function checkWorker(workerUrl: string): Promise<boolean> {
 }
 
 export async function analyzeWithOllama(workerUrl: string, segments: TranscriptSegment[], recordedAt: string, context: string): Promise<AnalysisResult> {
+  requireLocalWorker();
   const response = await fetch(`${workerUrl.replace(/\/$/, '')}/v1/analyze`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      provider: 'ollama',
       recorded_at: recordedAt,
       context,
       segments: segments.map((segment) => ({
@@ -187,10 +192,12 @@ export async function analyzeWithOllama(workerUrl: string, segments: TranscriptS
 }
 
 export async function analyzeSalesWithOllama(workerUrl: string, segments: TranscriptSegment[], recordedAt: string, context: string): Promise<AnalysisResult> {
+  requireLocalWorker();
   const response = await fetch(`${workerUrl.replace(/\/$/, '')}/v1/analyze-sales`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      provider: 'ollama',
       recorded_at: recordedAt,
       context,
       segments: segments.map((segment) => ({

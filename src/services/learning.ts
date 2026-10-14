@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { requireLocalWorker } from './runtime';
 import type { SocialAuditAnalysis, StudyAnalysis } from '../domain/learning';
 import type { LanguageMode } from '../domain/types';
 
@@ -360,6 +361,7 @@ function normalizeSocialAudit(value: unknown): unknown {
 }
 
 async function postJson<T>(workerUrl: string, path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
+  requireLocalWorker();
   const response = await fetch(`${workerUrl.replace(/\/$/, '')}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

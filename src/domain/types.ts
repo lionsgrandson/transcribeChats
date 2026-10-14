@@ -29,6 +29,8 @@ export interface Transcription {
   summaryJobStatus?: 'queued' | 'processing' | 'waiting' | 'ready' | 'failed';
   summaryNextRetryAt?: string;
   summaryJobError?: string;
+  summaryJobMode?: 'summary' | 'meeting';
+  summaryAppliedJobId?: string;
   progress?: number;
   stage?: string;
   jobId?: string;
@@ -106,7 +108,13 @@ export interface AppSettings {
   crmProvider: 'codecrafter' | 'creativecrm' | 'compatible' | 'custom';
   crmWebhookUrl: string;
   crmApiToken: string;
+  crmConnectionMode?: 'api' | 'browser';
+  crmBaseUrl?: string;
   lastSyncAt?: string;
+  syncUserId?: string;
+  syncRevision?: number;
+  syncDigest?: string;
+  syncAudio?: boolean;
 }
 
 export interface AnalysisResult {

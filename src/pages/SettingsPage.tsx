@@ -6,6 +6,10 @@ import type { LanguageMode, Locale } from '../domain/types';
 import { useTranslation } from '../i18n/useTranslation';
 import { currentUser, sendMagicLink, signOut, supabase, supabaseConfigured } from '../services/supabase';
 import { useAppStore } from '../state/AppStore';
+import { CrmSettings } from '../components/CrmSettings';
+import { db, recoverLegacyBrowserData } from '../data/db';
+import { downloadWorkspaceSnapshot, localWorkspaceSnapshot } from '../services/workspaceSync';
+import { AuthChallenge } from '../components/AuthChallenge';
 
 export function SettingsPage() {
   const store = useAppStore();
@@ -14,6 +18,7 @@ export function SettingsPage() {
   const [user, setUser] = useState<User | null>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState('');
   const cloud = Boolean(import.meta.env.VITE_CLOUD_TRANSCRIBE_URL);
   useEffect(() => {
     void currentUser().then(setUser);
@@ -23,7 +28,7 @@ export function SettingsPage() {
   const doSignIn = async () => {
     if (!email.trim()) return;
     setBusy(true); setMessage('');
-    try { await sendMagicLink(email.trim()); setMessage('Check your email for a secure sign-in link.'); }
+    try { await sendMagicLink(email.trim(), captchaToken); setCaptchaToken(''); setMessage('Check your email for a secure sign-in link.'); }
     catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Sign-in failed.'); }
     finally { setBusy(false); }
   };
@@ -52,13 +57,20 @@ export function SettingsPage() {
           <div className="inline-actions"><Button variant="secondary" onClick={() => void signOut().then(() => setUser(null)).catch((reason) => setMessage(String(reason)))}>Sign out</Button>
             <Button variant="secondary" disabled={busy} onClick={() => { setBusy(true); void store.sync().then(() => setMessage('Sync completed.')).catch((reason) => setMessage(String(reason))).finally(() => setBusy(false)); }}><Cloud size={16} />Sync records</Button></div>
         </> : <div><Field label="Email"><input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" /></Field>
-          <Button busy={busy} disabled={!email.trim()} onClick={() => void doSignIn()}>Email sign-in link</Button></div>}
+          <AuthChallenge onToken={setCaptchaToken} /><Button busy={busy} disabled={!email.trim() || Boolean(import.meta.env.VITE_TURNSTILE_SITE_KEY && !captchaToken)} onClick={() => void doSignIn()}>Email sign-in link</Button></div>}
       </Card>}
       {!supabaseConfigured && cloud && <Card className="settings-section"><strong>Sign-in not configured.</strong><p>Set the Supabase public URL and publishable key in the frontend build before enabling the hosted transcription engine.</p></Card>}
       <Card className="settings-section"><div className="settings-heading"><span><Shield /></span><div><h2>Privacy and storage</h2></div></div>
         <p>Original recordings and transcripts are saved in this browser's local IndexedDB. Cloud transcription uploads audio temporarily for model inference; the transcription API does not persist it. Signing in does not automatically synchronize stored records.</p>
         <p>Export your transcript before clearing browser data or uninstalling the app. Full synchronization is an explicit action.</p>
+        <label className="checkbox-field"><input type="checkbox" checked={Boolean(store.settings.syncAudio)} onChange={(event) => void store.updateSettings({ syncAudio: event.target.checked })} />Include recordings in manual cloud sync (up to 50 MiB each)</label>
+        <div className="workspace-actions"><Button variant="secondary" onClick={() => void localWorkspaceSnapshot('export').then((snapshot) => downloadWorkspaceSnapshot(snapshot)).catch((reason) => setMessage(String(reason)))}>Export workspace JSON</Button><Button variant="secondary" onClick={() => void db.syncBackups.orderBy('createdAt').last().then((backup) => { if (backup) downloadWorkspaceSnapshot(backup.payload, 'transcribechats-recovery.json'); else setMessage('No recovery snapshots are needed yet.'); }).catch((reason) => setMessage(String(reason)))}>Export latest recovery copy</Button></div>
+        {db.name !== 'transcribeChats' && <Button variant="secondary" disabled={busy} onClick={() => {
+          if (!window.confirm('Copy legacy transcripts, recordings and learning data from this browser into your account workspace? Continue only if these records belong to you. Existing account records and the original data will be preserved. CRM credentials will not be copied.')) return;
+          setBusy(true); void recoverLegacyBrowserData().then((count) => { setMessage(`Recovered ${count} legacy transcripts. Reloading workspace…`); window.location.reload(); }).catch((reason) => setMessage(String(reason))).finally(() => setBusy(false));
+        }}>Recover existing browser transcripts</Button>}
       </Card>
+      <CrmSettings />
     </div>
   </div>;
 }

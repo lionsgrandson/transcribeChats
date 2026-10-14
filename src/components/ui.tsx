@@ -1,5 +1,6 @@
-import { useEffect, useId, useRef } from 'react';
-import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from 'react';
+import { cloneElement, isValidElement, useEffect, useId, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import type { ButtonHTMLAttributes, HTMLAttributes, ReactElement, ReactNode } from 'react';
 import { AlertCircle, CheckCircle2, Inbox, LoaderCircle, X } from 'lucide-react';
 import { useTranslation } from '../i18n/useTranslation';
 import type { TranslationKey } from '../i18n/translations';
@@ -102,16 +103,19 @@ export function Modal({ open, title, onClose, children, wide = false }: { open: 
   }, [open]);
 
   if (!open) return null;
-  return (
+  return createPortal(
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section ref={dialogRef} tabIndex={-1} className={`modal ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <header className="modal-header"><h2 id={titleId}>{title}</h2><button type="button" className="icon-button" onClick={onClose} aria-label="Close"><X size={20} /></button></header>
         <div className="modal-body">{children}</div>
       </section>
-    </div>
+    </div>, document.body
   );
 }
 
 export function Field({ label, hint, children, className = '' }: { label: string; hint?: string; children: ReactNode; className?: string }) {
-  return <label className={`field ${className}`}><span className="field-label">{label}</span>{children}{hint && <span className="field-hint">{hint}</span>}</label>;
+  const generated = useId();
+  const control = isValidElement(children) ? children as ReactElement<{ id?: string; 'aria-describedby'?: string }> : null;
+  const id = control?.props.id || generated;
+  return <div className={`field ${className}`}><label className="field-label" htmlFor={id}>{label}</label>{control ? cloneElement(control, { id, 'aria-describedby': hint ? `${id}-hint` : control.props['aria-describedby'] }) : children}{hint && <span className="field-hint" id={`${id}-hint`}>{hint}</span>}</div>;
 }

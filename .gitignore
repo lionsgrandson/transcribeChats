@@ -3,6 +3,14 @@ dist/
 coverage/
 .env
 .env.local
+.env.*.local
+.wrangler/
+.audit/
+.audit-*
+.crm-*
+.cf-*
+test-results/
+playwright-report/
 *.log
 *.tsbuildinfo
 vite.config.js

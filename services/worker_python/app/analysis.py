@@ -375,7 +375,6 @@ async def _gemini(client: httpx.AsyncClient, prompt: str, schema: dict) -> Analy
         json={
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {
-                "temperature": 0,
                 "responseMimeType": "application/json",
                 "responseJsonSchema": schema,
             },
@@ -391,7 +390,11 @@ async def _gemini(client: httpx.AsyncClient, prompt: str, schema: dict) -> Analy
     return Analysis.model_validate_json(content)
 
 
-async def _ai(client: httpx.AsyncClient, prompt: str, schema: dict) -> Analysis:
+async def _ai(client: httpx.AsyncClient, prompt: str, schema: dict, provider: str = 'auto') -> Analysis:
+    if provider == 'ollama':
+        return await _ollama(client, prompt, schema)
+    if provider == 'gemini':
+        return await _gemini(client, prompt, schema)
     gemini_error = None
     if settings.gemini_api_key:
         try:
@@ -471,7 +474,7 @@ def _postprocess_sales(result: Analysis, segments: list[Segment]) -> Analysis:
     return result
 
 
-async def analyze_sales(segments: list[Segment], conversation_date: datetime, context: str) -> Analysis:
+async def analyze_sales(segments: list[Segment], conversation_date: datetime, context: str, provider: str = 'auto') -> Analysis:
     if not settings.gemini_api_key and not settings.ollama_url:
         raise RuntimeError("Neither Gemini nor Ollama is configured for the transcription worker.")
     cleaned, quality_notes = sanitize_segments(segments)
@@ -486,12 +489,14 @@ async def analyze_sales(segments: list[Segment], conversation_date: datetime, co
             client,
             _sales_analysis_prompt(transcript, schema, conversation_date, context, quality_notes),
             schema,
+            provider,
         )
         try:
             verified = await _ai(
                 client,
                 _sales_verification_prompt(transcript, draft, schema, conversation_date, context),
                 schema,
+                provider,
             )
         except Exception:
             verified = draft
@@ -534,16 +539,16 @@ def _postprocess(result: Analysis, segments: list[Segment], conversation_date: d
     return result
 
 
-async def analyze(segments: list[Segment], conversation_date: datetime, context: str) -> Analysis:
+async def analyze(segments: list[Segment], conversation_date: datetime, context: str, provider: str = 'auto') -> Analysis:
     if not settings.gemini_api_key and not settings.ollama_url: raise RuntimeError("Neither Gemini nor Ollama is configured for the transcription worker.")
     cleaned, quality_notes = sanitize_segments(segments)
     cleaned = cleaned or segments
     transcript = "\n".join(f'<segment id="{s.id or ""}" start_ms="{s.start_ms}" end_ms="{s.end_ms}" speaker="{s.speaker_label}">{s.text}</segment>' for s in cleaned)
     schema = Analysis.model_json_schema()
     async with httpx.AsyncClient(timeout=900) as client:
-        draft = await _ai(client, _analysis_prompt(transcript, schema, conversation_date, context, quality_notes), schema)
+        draft = await _ai(client, _analysis_prompt(transcript, schema, conversation_date, context, quality_notes), schema, provider)
         try:
-            verified = await _ai(client, _verification_prompt(transcript, draft, schema, conversation_date, context), schema)
+            verified = await _ai(client, _verification_prompt(transcript, draft, schema, conversation_date, context), schema, provider)
         except Exception:
             verified = draft
     return _postprocess(verified, cleaned, conversation_date)

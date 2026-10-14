@@ -1,4 +1,4 @@
-import type { TranscriptSegment, Transcription } from '../domain/types';
+import type { AnalysisResult, TranscriptSegment, Transcription } from '../domain/types';
 import { formatTimestamp } from '../lib/format';
 import { supabase } from './supabase';
 
@@ -8,6 +8,7 @@ export interface SummaryJob {
   status: SummaryJobStatus;
   attempts?: number;
   summary?: string;
+  items?: AnalysisResult['items'];
   error?: string;
   nextRetryAt?: string | null;
 }
@@ -19,7 +20,7 @@ export class SummaryRateLimitError extends Error {
 }
 
 function endpoint(): string {
-  const base = import.meta.env.VITE_CLOUD_TRANSCRIBE_URL?.trim();
+  const base = import.meta.env.VITE_AI_API_URL?.trim() || import.meta.env.VITE_CLOUD_TRANSCRIBE_URL?.trim();
   if (!base) throw new Error('Gemini summaries require the hosted Cloudflare backend.');
   return base.replace(/\/$/, '') + '/v1/analyze';
 }
@@ -49,9 +50,9 @@ async function readJob(response: Response, jobId: string): Promise<SummaryJob> {
   return { ...payload, jobId, status: payload.status as SummaryJobStatus };
 }
 
-export async function createGeminiSummaryJob(transcription: Transcription, segments: TranscriptSegment[], jobId: string): Promise<SummaryJob> {
+export async function createGeminiSummaryJob(transcription: Transcription, segments: TranscriptSegment[], jobId: string, mode: 'summary' | 'meeting' = transcription.summaryJobMode || 'summary'): Promise<SummaryJob> {
   const transcript = [...segments].sort((a, b) => a.sequenceNo - b.sequenceNo)
-    .map((segment) => '[' + formatTimestamp(segment.startMs) + '] ' + segment.speakerLabel + ': ' + segment.text).join('\n');
+    .map((segment) => '[segment_id=' + segment.id + ' ' + formatTimestamp(segment.startMs) + '] ' + segment.speakerLabel + ': ' + segment.text).join('\n');
   if (!transcript.trim()) throw new Error('This transcript has no text to summarize.');
   if (transcript.length > 120_000) {
     throw new Error('This transcript exceeds the current 120,000-character limit. The text has not been truncated. Export to ChatGPT or divide it into separate recordings.');
@@ -59,7 +60,7 @@ export async function createGeminiSummaryJob(transcription: Transcription, segme
   const headers = { ...(await authHeaders()), 'Content-Type': 'application/json', 'Idempotency-Key': jobId };
   const response = await fetch(endpoint(), {
     method: 'POST', headers,
-    body: JSON.stringify({ title: transcription.title, context: transcription.context || '', transcript }),
+    body: JSON.stringify({ title: transcription.title, context: transcription.context || '', recordedAt: transcription.recordedAt, transcript, mode }),
     signal: AbortSignal.timeout(35_000)
   });
   return readJob(response, jobId);

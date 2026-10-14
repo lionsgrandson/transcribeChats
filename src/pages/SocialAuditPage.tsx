@@ -1,3 +1,4 @@
+import { cloudTranscription, hostedRuntime } from '../services/runtime';
 import { ExternalLink, FileText, MessageCircleMore, Search, ShieldCheck, Sparkles, UploadCloud } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Card, Field } from '../components/ui';
@@ -98,7 +99,9 @@ export function SocialAuditPage() {
         setProgress(70); setStage('Auditing conversation with Ollama');
       }
 
-      const analysis = await analyzeSocialAuditWithOllama(settings.workerUrl, { title: resolvedTitle, transcript, context });
+      const analysis = hostedRuntime || cloudTranscription
+        ? parseSocialAuditChatGptResult(JSON.stringify({ title: resolvedTitle, summary: 'Source saved. Use ChatGPT review and import to create an evidence-based conversation audit.' }))
+        : await analyzeSocialAuditWithOllama(settings.workerUrl, { title: resolvedTitle, transcript, context });
       const now = new Date().toISOString();
       const id = createId();
       const entry: SocialAuditEntry = {
@@ -114,6 +117,7 @@ export function SocialAuditPage() {
       setSessionRaw((current) => ({ ...current, [id]: transcript }));
       await reload();
       setSelectedId(id);
+      if (hostedRuntime || cloudTranscription) setTab('chatgpt');
       setProgress(100); setStage('Ready');
       showToast(saveRaw ? 'Conversation audit saved locally with its transcript.' : 'Audit saved locally. Raw transcript is kept only for this session.');
       setFile(undefined); setText(''); setTitle('');
@@ -172,7 +176,7 @@ export function SocialAuditPage() {
       try {
         analysis = parseSocialAuditChatGptResult(rawOutput);
       } catch {
-        if (workerReady === false) throw new Error('The ChatGPT response was saved, but the local worker is offline so it could not be repaired into the structured audit tabs.');
+        if (hostedRuntime || cloudTranscription || workerReady === false) throw new Error('The ChatGPT response was saved, but the local worker is offline so it could not be repaired into the structured audit tabs.');
         setChatImportStage('Formatting response locally with Ollama');
         analysis = await repairSocialAuditChatGptResult(settings.workerUrl, { title: selected.title, response: rawOutput });
         repairedLocally = true;

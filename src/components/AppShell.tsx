@@ -1,4 +1,4 @@
-import { CirclePlus, Clock3, Home, Languages, Menu, Search, Settings, Wifi, WifiOff, X } from 'lucide-react';
+import { BookOpen, CalendarDays, CirclePlus, Clock3, Home, Languages, ListChecks, Menu, Search, Settings, TrendingUp, Users, Wifi, WifiOff, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useTranslation } from '../i18n/useTranslation';
@@ -33,6 +33,11 @@ export function AppShell() {
     { to: '/', label: t('home'), icon: Home },
     { to: '/new', label: t('newTranscript'), icon: CirclePlus },
     { to: '/history', label: t('history'), icon: Clock3 },
+    { to: '/tasks', label: t('tasks'), icon: ListChecks },
+    { to: '/calendar', label: t('calendar'), icon: CalendarDays },
+    { to: '/study', label: locale === 'he' ? 'לימוד וקורסים' : 'Study & courses', icon: BookOpen, specialized: true },
+    { to: '/social-audit', label: locale === 'he' ? 'ניתוח שיחות' : 'Conversation insights', icon: Users },
+    { to: '/sales', label: locale === 'he' ? 'תובנות מכירה' : 'Sales intelligence', icon: TrendingUp },
     { to: '/settings', label: t('settings'), icon: Settings }
   ];
   return <div className="app-shell">
@@ -40,7 +45,7 @@ export function AppShell() {
     <aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`} aria-label={t('appName')}>
       <div className="brand"><span className="brand-mark">T</span><span>{t('appName')}</span><button type="button" className="icon-button sidebar-close" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X /></button></div>
       <nav className="main-nav" aria-label="Primary">
-        {nav.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} onClick={() => setMobileOpen(false)}><Icon size={20} /><span>{label}</span></NavLink>)}
+        {nav.map(({ to, label, icon: Icon, specialized }) => <div key={to}>{specialized && <p className="nav-section-label">{locale === 'he' ? 'סביבות עבודה' : 'Workspaces'}</p>}<NavLink to={to} end={to === '/'} onClick={() => setMobileOpen(false)}><Icon size={20} /><span>{label}</span></NavLink></div>)}
       </nav>
       <div className="sidebar-footer">
         <div className={`connectivity ${online ? 'is-online' : 'is-offline'}`} role="status"><span>{online ? <Wifi size={16} /> : <WifiOff size={16} />}</span>{online ? t('online') : t('offline')}</div>

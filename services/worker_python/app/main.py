@@ -206,7 +206,7 @@ async def analyze_transcript(request: AnalysisRequest) -> Analysis:
         reference = datetime.now(timezone.utc)
     release_model()
     try:
-        return await analyze_segments(request.segments, reference, request.context[:4000])
+        return await analyze_segments(request.segments, reference, request.context[:4000], request.provider)
     except Exception as error:
         logger.exception("Ollama analysis failed")
         raise HTTPException(status_code=502, detail=f"Ollama analysis failed: {error}") from error
@@ -224,7 +224,7 @@ async def analyze_sales_transcript(request: AnalysisRequest) -> Analysis:
         reference = datetime.now(timezone.utc)
     release_model()
     try:
-        return await analyze_sales_segments(request.segments, reference, request.context[:4000])
+        return await analyze_sales_segments(request.segments, reference, request.context[:4000], request.provider)
     except Exception as error:
         logger.exception("Sales intelligence analysis failed")
         raise HTTPException(status_code=502, detail=f"Sales intelligence analysis failed: {error}") from error

@@ -93,7 +93,7 @@ function geminiEnv(overrides = {}) {
   const durable = new GeminiSummaryJob(context, configuration);
   configuration.GEMINI_JOBS = {
     idFromName: (name) => name,
-    get: () => ({ fetch: (...args) => durable.fetch(...args) })
+    get: () => ({ fetch: (input, init) => durable.fetch(new Request(input, init)) })
   };
   return { configuration, durable, storage };
 }

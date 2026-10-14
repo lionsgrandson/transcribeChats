@@ -56,6 +56,7 @@ class Analysis(BaseModel):
 
 class AnalysisRequest(BaseModel):
     segments: list[Segment]
+    provider: Literal['auto', 'ollama', 'gemini'] = 'auto'
     recorded_at: str | None = None
     context: str = ""
 

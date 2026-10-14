@@ -62,6 +62,8 @@ export type CrmDestination = {
 
 export type CrmTransferResult = {
   accepted: boolean;
+  pendingConfirmation?: boolean;
+  message?: string;
   tasksCreated?: number;
   eventsCreated?: number;
   contactId?: string | null;
@@ -92,8 +94,49 @@ export function encodeCrmTasks(value: CrmTaskPayload[]): string {
 }
 
 export function crmImportUrl(tasks: CrmTaskPayload[], baseUrl: string): string {
-  const cleanBase = baseUrl.replace(/\/$/, '');
-  return `${cleanBase}/#importTasks=${encodeURIComponent(encodeCrmTasks(tasks))}`;
+  const destination = validateCrmDestination(baseUrl, 'browser');
+  destination.hash = `importTasks=${encodeURIComponent(encodeCrmTasks(tasks))}`;
+  return destination.toString();
+}
+
+export function validateCrmDestination(value: string, mode: 'api' | 'browser'): URL {
+  let url: URL;
+  try { url = new URL(value.trim()); } catch { throw new Error('Enter a valid CRM destination URL.'); }
+  const host = url.hostname.toLowerCase();
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash ||
+    !host.includes('.') || host.endsWith('.local') || host.endsWith('.internal') ||
+    /^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(':')) {
+    throw new Error('Use a public HTTPS CRM destination without credentials, query parameters or fragments.');
+  }
+  if (mode === 'api' && !url.pathname.endsWith('/functions/v1/crm-ingest')) {
+    throw new Error('Use the CodeCrafter CRM inbound API endpoint ending in /functions/v1/crm-ingest.');
+  }
+  return url;
+}
+
+export const crmAdapters = {
+  codecrafter: { name: 'CodeCrafter CRM', modes: ['browser', 'api'] as const },
+};
+
+export const browserCrmMode = (settings: AppSettings): boolean => settings.crmConnectionMode === 'browser';
+
+export function crmTransferMessage(result: CrmTransferResult): string {
+  if (result.pendingConfirmation) return 'CRM import opened. Review the project and save in your CRM to confirm. Import is not yet confirmed.';
+  if (!result.accepted) throw new Error('The CRM did not confirm this transfer.');
+  if (result.duplicate) return 'CRM confirmed the request; previously imported source IDs were skipped.';
+  return typeof result.tasksCreated === 'number' ? `CRM confirmed ${result.tasksCreated} task(s) created.` : 'CRM confirmed the import request.';
+}
+
+async function openBrowserImport(tasks: CrmTaskPayload[], settings: AppSettings): Promise<CrmTransferResult> {
+  if (!settings.crmEnabled) throw new Error('Connect your CRM in Settings first.');
+  const stored = await db.items.bulkGet(tasks.map((task) => task.sourceId));
+  const eligible = tasks.filter((_, index) => !stored[index] || (stored[index]!.kind === 'task' && !['completed', 'dismissed'].includes(stored[index]!.status)));
+  if (!eligible.length) throw new Error('Completed or dismissed tasks are not sent to the CRM.');
+  const url = crmImportUrl(eligible, settings.crmBaseUrl || '');
+  if (url.length > 60_000) throw new Error('This selection is too large for browser import. Select fewer tasks or connect the workspace API.');
+  // noopener may return null even on success; never infer import success from window.open.
+  window.open(url, '_blank', 'noopener,noreferrer');
+  return { accepted: false, pendingConfirmation: true };
 }
 
 function matchContext(context: string | undefined, labels: string[]): string | undefined {
@@ -160,20 +203,19 @@ function crmDestinationKey(destination: CrmDestination): string {
 
 function validateSettings(settings: AppSettings): { webhookUrl: string; authorization: string } {
   if (!settings.crmEnabled) throw new Error('CRM sync is disabled. Choose a CRM in Settings first.');
+  if (settings.crmProvider !== 'codecrafter') throw new Error('This CRM provider has no verified adapter. Choose CodeCrafter CRM.');
   const webhookUrl = settings.crmWebhookUrl.trim();
   const token = settings.crmApiToken.trim();
   if (!webhookUrl || !token) throw new Error('Add the CRM webhook endpoint and API token in Settings.');
-  let parsed: URL;
-  try { parsed = new URL(webhookUrl); } catch { throw new Error('The CRM webhook endpoint is not a valid URL.'); }
-  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('The CRM webhook must use HTTP or HTTPS.');
+  validateCrmDestination(webhookUrl, 'api');
   return { webhookUrl, authorization: token.toLowerCase().startsWith('bearer ') ? token : `Bearer ${token}` };
 }
 
 export async function fetchCrmDirectory(settings: AppSettings): Promise<CrmDirectory> {
   const { webhookUrl, authorization } = validateSettings(settings);
-  const response = await fetch(webhookUrl, { method: 'GET', headers: { Authorization: authorization } });
+  const response = await fetch(webhookUrl, { method: 'GET', headers: { Authorization: authorization }, redirect: 'error', credentials: 'omit', signal: AbortSignal.timeout(20_000) });
   const result = await response.json().catch(() => ({})) as { accepted?: boolean; clients?: CrmDirectoryClient[]; projects?: CrmDirectoryProject[]; error?: string };
-  if (!response.ok || !result.accepted) throw new Error(result.error || `CRM returned HTTP ${response.status}.`);
+  if (!response.ok || result.accepted !== true) throw new Error(result.error || `CRM did not confirm the request (HTTP ${response.status}).`);
   return { clients: result.clients || [], projects: result.projects || [] };
 }
 
@@ -182,9 +224,10 @@ async function postToCrm(webhookUrl: string, authorization: string, payload: Rec
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: authorization },
     body: JSON.stringify(payload),
+    redirect: 'error', credentials: 'omit', signal: AbortSignal.timeout(30_000),
   });
   const result = await response.json().catch(() => ({})) as CrmTransferResult & { error?: string };
-  if (!response.ok || !result.accepted) throw new Error(result.error || `CRM returned HTTP ${response.status}.`);
+  if (!response.ok || result.accepted !== true) throw new Error(result.error || `CRM did not confirm the request (HTTP ${response.status}).`);
   return result;
 }
 
@@ -251,12 +294,14 @@ export async function sendTranscriptionToCrm(transcriptionId: string, settings: 
  */
 export async function sendTasksToCrm(tasks: CrmTaskPayload[], settings: AppSettings, destination: CrmDestination = {}): Promise<CrmTransferResult> {
   if (!tasks.length) throw new Error('Choose at least one task to send to the CRM.');
+  if (settings.crmProvider !== 'codecrafter') throw new Error('This CRM provider has no verified adapter. Choose CodeCrafter CRM.');
+  if (browserCrmMode(settings)) return openBrowserImport(tasks, settings);
   const { webhookUrl, authorization } = validateSettings(settings);
 
   const sourceItems = (await Promise.all(tasks.map((task) => db.items.get(task.sourceId))))
     .filter((item): item is ExtractedItem => Boolean(item));
   if (!sourceItems.length) return sendLegacyTasks(tasks, settings, webhookUrl, authorization);
-  const eligibleSourceItems = sourceItems.filter((item) => item.status !== 'completed' && item.status !== 'dismissed');
+  const eligibleSourceItems = sourceItems.filter((item) => item.kind === 'task' && item.status !== 'completed' && item.status !== 'dismissed');
   if (!eligibleSourceItems.length) throw new Error('Completed or dismissed tasks are not sent to the CRM.');
 
   const byTranscription = new Map<string, ExtractedItem[]>();
@@ -266,21 +311,21 @@ export async function sendTasksToCrm(tasks: CrmTaskPayload[], settings: AppSetti
     byTranscription.set(item.transcriptionId, current);
   }
 
-  let tasksCreated = 0;
-  let eventsCreated = 0;
+  let tasksCreated: number | undefined = 0;
+  let eventsCreated: number | undefined = 0;
   let contactId: string | null | undefined;
   let contactCreated = false;
   let duplicate = false;
 
   for (const [transcriptionId, selectedItems] of byTranscription) {
     const transcription = await db.transcriptions.get(transcriptionId);
-    if (!transcription) continue;
+    if (!transcription) throw new Error('A selected task no longer has a source transcription. No success was recorded.');
     const [workspaceItems, personalNotes] = await Promise.all([
       db.items.where('transcriptionId').equals(transcriptionId).toArray(),
       db.notes.where('transcriptionId').equals(transcriptionId).toArray(),
     ]);
     const selectedIds = new Set(selectedItems.map((item) => item.id));
-    const selectedTasks = tasks.filter((task) => selectedIds.has(task.sourceId));
+    const selectedTasks = selectedItems.filter((item) => selectedIds.has(item.id)).map((item) => toCrmTask(item, transcription.title));
     const events = workspaceItems
       .filter((item) => item.kind === 'event' && item.status !== 'dismissed')
       .map(toCrmEvent)
@@ -307,8 +352,8 @@ export async function sendTasksToCrm(tasks: CrmTaskPayload[], settings: AppSetti
       tasks: selectedTasks,
       events,
     });
-    tasksCreated += result.duplicate ? 0 : (result.tasksCreated ?? selectedTasks.length);
-    eventsCreated += result.duplicate ? 0 : (result.eventsCreated ?? events.length);
+    tasksCreated = result.duplicate ? tasksCreated : typeof result.tasksCreated === 'number' && tasksCreated !== undefined ? tasksCreated + result.tasksCreated : undefined;
+    eventsCreated = result.duplicate ? eventsCreated : typeof result.eventsCreated === 'number' && eventsCreated !== undefined ? eventsCreated + result.eventsCreated : undefined;
     contactId = result.contactId ?? contactId;
     contactCreated = contactCreated || Boolean(result.contactCreated);
     duplicate = duplicate || Boolean(result.duplicate);
