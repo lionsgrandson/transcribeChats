@@ -177,7 +177,7 @@ export function TranscriptionDetailPage() {
 
   if (store.loading) return <PageSkeleton />;
   if (!transcription) return <div className="page"><EmptyState title={t('noMatches')} body="This transcript was not found on this device." action={<Button onClick={() => navigate('/history')}>{t('history')}</Button>} /></div>;
-  return <div className="page">
+  return <div className="page transcription-detail-page">
     <header className="page-header">
       <div><span className="eyebrow"><FileText size={15} />{t('transcript')}</span><h1 dir="auto">{transcription.title}</h1><p>{formatDate(transcription.recordedAt)} · {segments.length} {t('transcript').toLowerCase()} segments</p></div>
       <div className="header-actions">
@@ -216,14 +216,14 @@ export function TranscriptionDetailPage() {
       <p className="muted">{store.settings.locale === 'he' ? 'אם המכסה עדיין מלאה, זמן ההמתנה יתארך. השלמה אינה מובטחת.' : 'If capacity is still unavailable, the wait may increase. Completion is not guaranteed.'}</p>
     </Card>}
     {segments.length > 0 && <p className="muted" role="note">{store.settings.locale === 'he' ? 'סיכום Gemini שולח את תוכן התמלול לעיבוד בענן רק בלחיצה. פתיחה ב-ChatGPT מעתיקה את התמלול ללוח ואינה שולחת אותו אוטומטית.' : 'Gemini sends transcript text to Google only when requested. ChatGPT export copies text to your clipboard; paste it yourself.'}</p>}
-    {transcription.summary && <Card className="summary-view">
+    {transcription.summary && <Card className="summary-view transcription-summary-card">
       <h2>{t('summary')}</h2><p dir="auto">{transcription.summary}</p>
     </Card>}
-    <Card>
+    <Card className="transcription-segments-card">
       <div className="section-heading"><div><h2>{t('transcript')}</h2><p>Speaker labels and timestamps can be corrected below. Cloud Whisper does not automatically identify different speakers.</p></div></div>
       {mediaUrl && <div className="media-controls"><audio ref={player} controls src={mediaUrl} preload="metadata" /></div>}
       {segments.length ? <div className="transcript-view">
-        {segments.map((segment) => <article className="segment-row" key={segment.id}>
+        {segments.map((segment) => <article className="segment-row transcription-segment" key={segment.id}>
           <button type="button" className="timestamp-button" onClick={() => playFrom(segment.startMs)} aria-label={`Play at ${formatTimestamp(segment.startMs)}`}><Play size={13} />{formatTimestamp(segment.startMs)}</button>
           <div className="segment-content">
             {editing === segment.id ? <>
