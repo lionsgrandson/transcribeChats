@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker, { GeminiSummaryJob } from './transcribe-worker.mjs';
+import { MAX_OUTPUT_TOKENS } from './gemini-jobs.mjs';
 
 const origin = 'https://transcribe.example.com';
 const env = (overrides = {}) => ({
@@ -144,7 +145,7 @@ test('Gemini alarm eventually completes and polling retrieves summary', async ()
     assert.equal(data.summary, 'דובר על הנושא המרכזי.');
     assert.equal(seen.length, 1);
     assert.equal(seen[0].options.headers['x-goog-api-key'], 'server-private-gemini-key');
-    assert.equal(JSON.parse(seen[0].options.body).generationConfig.maxOutputTokens, 3072);
+    assert.equal(JSON.parse(seen[0].options.body).generationConfig.maxOutputTokens, MAX_OUTPUT_TOKENS);
     assert.equal((await storage.get('job')).transcript, '');
   }));
 
