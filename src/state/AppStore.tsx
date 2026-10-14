@@ -14,6 +14,7 @@ import type {
 } from '../domain/types';
 import { createId } from '../lib/id';
 import { analyzeText } from '../services/analysis';
+import { previewImport } from '../services/importer';
 import { analyzeSalesWithOllama, analyzeWithOllama, checkWorker, transcribeWithWorker, TranscriptionRateLimitError } from '../services/worker';
 
 interface AppStoreValue {
@@ -42,10 +43,11 @@ interface AppStoreValue {
   deleteItems: (ids: string[]) => Promise<void>;
   addItem: (transcriptionId: string, item: Partial<ExtractedItem> & Pick<ExtractedItem, 'kind' | 'title'>) => Promise<void>;
   importItems: (transcriptionId: string, values: AnalysisResult['items']) => Promise<void>;
+  applyGeminiAnalysis: (transcriptionId: string, jobId: string, analysis: AnalysisResult) => Promise<void>;
   addNote: (transcriptionId: string, body: string) => Promise<void>;
   deleteTranscription: (id: string) => Promise<void>;
   runAnalysis: (id: string) => Promise<void>;
-  runOllamaAnalysis: (id: string) => Promise<AnalysisResult>;
+  runOllamaAnalysis: (id: string, provider?: 'ollama' | 'gemini') => Promise<AnalysisResult>;
   runSalesAnalysis: (id: string) => Promise<AnalysisResult>;
   loadDemo: () => Promise<void>;
   clearData: () => Promise<void>;
@@ -94,6 +96,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [notes, setNotes] = useState<TranscriptionNote[]>([]);
   const [toast, setToast] = useState<string>();
   const activeProcessingIds = useRef(new Set<string>());
+  const loadRevision = useRef(0);
   const retryTimers = useRef(new Map<string, number>());
   useEffect(() => () => {
     retryTimers.current.forEach((timer) => window.clearTimeout(timer));
@@ -106,11 +109,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const reload = useCallback(async () => {
+    const revision = ++loadRevision.current;
     try {
       const [storedSettings, storedTranscriptions, storedSegments, storedItems, storedNotes] = await Promise.all([
         db.settings.get('settings'), db.transcriptions.orderBy('updatedAt').reverse().toArray(),
         db.segments.toArray(), db.items.toArray(), db.notes.toArray()
       ]);
+      if (revision !== loadRevision.current) return;
       setSettings(storedSettings ? { ...defaultSettings, ...storedSettings } : defaultSettings);
       setTranscriptions(storedTranscriptions);
       setSegments(storedSegments);
@@ -159,18 +164,24 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void refreshWorker(); }, [refreshWorker]);
 
   const updateSettings = useCallback(async (patch: Partial<AppSettings>) => {
-    const next = { ...settings, ...patch };
-    await db.settings.put(next);
+    const next = await db.transaction('rw', db.settings, async () => {
+      const current = await db.settings.get('settings') || defaultSettings;
+      const merged = { ...current, ...patch, id: 'settings' as const };
+      await db.settings.put(merged);
+      return merged;
+    });
     setSettings(next);
-  }, [settings]);
+  }, []);
 
   const persistAnalysis = useCallback(async (transcriptionId: string, analysis: AnalysisResult) => {
     const created = makeItems(transcriptionId, analysis);
     await db.transaction('rw', db.transcriptions, db.items, async () => {
       await db.transcriptions.update(transcriptionId, { summary: analysis.summary, updatedAt: new Date().toISOString() });
-      const replaceable = await db.items.where('transcriptionId').equals(transcriptionId).filter((item) => !item.confirmed && !item.tags?.includes('sales-intelligence')).primaryKeys();
+      const kept = await db.items.where('transcriptionId').equals(transcriptionId).filter((item) => item.confirmed || ['completed', 'dismissed'].includes(item.status)).toArray();
+      const replaceable = await db.items.where('transcriptionId').equals(transcriptionId).filter((item) => !item.confirmed && !['completed', 'dismissed'].includes(item.status) && !item.tags?.includes('sales-intelligence')).primaryKeys();
       if (replaceable.length) await db.items.bulkDelete(replaceable);
-      if (created.length) await db.items.bulkAdd(created);
+      const additions = created.filter((item) => !kept.some((existing) => existing.kind === item.kind && existing.title.trim().toLowerCase() === item.title.trim().toLowerCase()));
+      if (additions.length) await db.items.bulkAdd(additions);
     });
     return created;
   }, []);
@@ -352,6 +363,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, [reload]);
   const updateItems = useCallback(async (updates: Array<{ id: string; patch: Partial<ExtractedItem> }>) => {
     if (!updates.length) return;
+    ++loadRevision.current;
 
     const patchesById = new Map<string, Partial<ExtractedItem>>();
     for (const update of updates) {
@@ -368,6 +380,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       const nextItems = existing.map((item, index) => normalizeStoredItem({
         ...item!,
         ...patchesById.get(ids[index]),
+        id: item!.id, transcriptionId: item!.transcriptionId,
         updatedAt: timestamp
       }));
       await db.items.bulkPut(nextItems);
@@ -411,6 +424,24 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     await reload();
     showToast(`${created.length} items imported.`);
   }, [reload, showToast]);
+  const applyGeminiAnalysis = useCallback(async (transcriptionId: string, jobId: string, analysis: AnalysisResult) => {
+    const preview = previewImport(JSON.stringify({ items: analysis.items }), []);
+    if (preview.invalid.length) throw new Error('Gemini returned invalid follow-ups. Your transcript is preserved.');
+    await db.transaction('rw', db.transcriptions, db.segments, db.items, async () => {
+      const transcription = await db.transcriptions.get(transcriptionId);
+      if (!transcription || transcription.summaryJobId !== jobId || transcription.summaryAppliedJobId === jobId) return;
+      const sources = new Set(await db.segments.where('transcriptionId').equals(transcriptionId).primaryKeys());
+      const values = preview.valid.map((item) => ({ ...item,
+        status: item.kind === 'task' || item.kind === 'event' ? 'needs_review' as const : 'open' as const,
+        confirmed: false, tags: [...item.tags, 'gemini'],
+        sourceSegmentIds: item.sourceSegmentIds.filter((source) => sources.has(source))
+      }));
+      const created = makeItems(transcriptionId, { summary: analysis.summary, items: values });
+      if (created.length) await db.items.bulkAdd(created);
+      await db.transcriptions.update(transcriptionId, { summary: analysis.summary, summaryAppliedJobId: jobId, summaryJobStatus: 'ready' });
+    });
+    await reload();
+  }, [reload]);
   const addNote = useCallback(async (transcriptionId: string, body: string) => {
     const now = new Date().toISOString();
     await db.notes.add({ id: createId(), transcriptionId, body, createdAt: now, updatedAt: now });
@@ -436,14 +467,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     await reload();
     showToast('Analysis completed.');
   }, [persistAnalysis, reload, showToast]);
-  const runOllamaAnalysis = useCallback(async (id: string) => {
+  const runOllamaAnalysis = useCallback(async (id: string, provider: 'ollama' | 'gemini' = 'ollama') => {
     const transcription = await db.transcriptions.get(id);
     const values = await db.segments.where('transcriptionId').equals(id).sortBy('sequenceNo');
     if (!transcription || !values.length) throw new Error('A transcript is required before Ollama analysis.');
-    const result = await analyzeWithOllama(settings.workerUrl, values, transcription.recordedAt, transcription.context || '');
+    const result = await analyzeWithOllama(settings.workerUrl, values, transcription.recordedAt, transcription.context || '', provider);
     await persistAnalysis(id, result);
     await reload();
-    showToast('Ollama analysis completed. Review suggestions before accepting them.');
+    showToast(`${provider === 'gemini' ? 'Gemini' : 'Ollama'} analysis completed. Review suggestions before accepting them.`);
     return result;
   }, [persistAnalysis, reload, settings.workerUrl, showToast]);
 
@@ -473,22 +504,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     showToast('Local data cleared.');
   }, [reload, showToast]);
   const sync = useCallback(async () => {
-    const { pullFromSupabase, syncToSupabase } = await import('../services/supabase');
-    const media = await db.media.toArray();
-    await syncToSupabase(transcriptions, segments, items, notes, media);
-    const cloud = await pullFromSupabase();
-    await db.transaction('rw', db.transcriptions, db.segments, db.items, db.notes, async () => {
-      if (cloud.transcriptions.length) await db.transcriptions.bulkPut(cloud.transcriptions);
-      if (cloud.segments.length) await db.segments.bulkPut(cloud.segments);
-      if (cloud.items.length) await db.items.bulkPut(cloud.items);
-      if (cloud.notes.length) await db.notes.bulkPut(cloud.notes);
-    });
-    const timestamp = new Date().toISOString();
-    await db.transcriptions.toCollection().modify({ synced: true });
-    await updateSettings({ lastSyncAt: timestamp });
+    const { syncWorkspace } = await import('../services/workspaceSync');
+    await syncWorkspace();
     await reload();
-    showToast('All local changes are synced.');
-  }, [items, notes, reload, segments, showToast, transcriptions, updateSettings]);
+    showToast('Cloud sync confirmed.');
+  }, [reload, showToast]);
 
   const tSegments = useCallback((id: string) => segments.filter((segment) => segment.transcriptionId === id).sort((a, b) => a.sequenceNo - b.sequenceNo), [segments]);
   const tItems = useCallback((id: string) => items.filter((item) => item.transcriptionId === id), [items]);
@@ -497,11 +517,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AppStoreValue>(() => ({
     loading, error, online, workerReady, settings, transcriptions, segments, items, notes, toast,
     tSegments, tItems, tNotes, updateSettings, createManual, processMedia, retryTranscription,
-    updateTranscription, updateSegment, updateItem, updateItems, deleteItem, deleteItems, addItem, importItems, addNote, deleteTranscription,
+    updateTranscription, updateSegment, updateItem, updateItems, deleteItem, deleteItems, addItem, importItems, applyGeminiAnalysis, addNote, deleteTranscription,
     runAnalysis, runOllamaAnalysis, runSalesAnalysis, loadDemo, clearData, sync, refreshWorker, showToast
   }), [loading, error, online, workerReady, settings, transcriptions, segments, items, notes, toast,
     tSegments, tItems, tNotes, updateSettings, createManual, processMedia, retryTranscription,
-    updateTranscription, updateSegment, updateItem, updateItems, deleteItem, deleteItems, addItem, importItems, addNote, deleteTranscription,
+    updateTranscription, updateSegment, updateItem, updateItems, deleteItem, deleteItems, addItem, importItems, applyGeminiAnalysis, addNote, deleteTranscription,
     runAnalysis, runOllamaAnalysis, runSalesAnalysis, loadDemo, clearData, sync, refreshWorker, showToast]);
 
   return <AppStoreContext.Provider value={value}>{children}</AppStoreContext.Provider>;

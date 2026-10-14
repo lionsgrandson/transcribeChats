@@ -1,3 +1,4 @@
+import { MeetingFollowups } from '../components/MeetingFollowups';
 import { Check, Download, Edit3, FileText, MessageSquare, Play, RotateCcw, Sparkles, Trash2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -53,6 +54,7 @@ export function TranscriptionDetailPage() {
       if (stopped) return;
       if (job.status === 'ready') {
         if (!job.summary) throw new Error('Gemini completed without returning a summary.');
+        if (job.items) await store.applyGeminiAnalysis(id, summaryJobId, { summary: job.summary, items: job.items });
         await store.updateTranscription(id, {
           summary: job.summary, summaryJobStatus: 'ready', summaryNextRetryAt: undefined,
           summaryJobError: undefined
@@ -129,15 +131,21 @@ export function TranscriptionDetailPage() {
     if (!transcription || summarizing) return;
     setSummarizing(true);
     setError('');
+    if (!import.meta.env.VITE_CLOUD_TRANSCRIBE_URL && !import.meta.env.VITE_AI_API_URL) {
+      try { await store.runOllamaAnalysis(id, 'gemini'); }
+      catch (reason) { setError(reason instanceof Error ? reason.message : 'Gemini analysis failed.'); }
+      finally { setSummarizing(false); }
+      return;
+    }
     const jobId = crypto.randomUUID();
     try {
       // Persist the id before submission: if the network drops, the same request
       // can safely be retried with its idempotency key on the next app visit.
       await store.updateTranscription(id, {
-        summaryJobId: jobId, summaryJobStatus: 'queued',
+        summaryJobId: jobId, summaryJobStatus: 'queued', summaryJobMode: 'summary',
         summaryNextRetryAt: undefined, summaryJobError: undefined
       });
-      const job = await createGeminiSummaryJob(transcription, segments, jobId);
+      const job = await createGeminiSummaryJob(transcription, segments, jobId, 'summary');
       await store.updateTranscription(id, {
         summaryJobStatus: job.status,
         summaryNextRetryAt: job.nextRetryAt || undefined,
@@ -184,8 +192,8 @@ export function TranscriptionDetailPage() {
         <StatusBadge status={transcription.status} />
         <Button variant="secondary" busy={summarizing} disabled={!segments.length || transcription.status !== 'ready' || Boolean(transcription.summaryJobId && !['ready', 'failed'].includes(transcription.summaryJobStatus || 'queued'))} onClick={() => void runGeminiSummary()}><Sparkles size={16} />{store.settings.locale === 'he' ? 'סיכום עם Gemini' : 'Summarize with Gemini'}</Button>
         <Button variant="secondary" disabled={!segments.length} onClick={() => void exportToChatGpt()}><MessageSquare size={16} />{t('openInChatGPT')}</Button>
-        <Button variant="secondary" onClick={() => exportText(transcription, segments, [])}><Download size={16} />TXT</Button>
-        <Button variant="secondary" onClick={() => { try { printPdf(transcription, segments, []); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not open PDF.'); } }}><Download size={16} />PDF</Button>
+        <Button variant="secondary" onClick={() => exportText(transcription, segments, store.tItems(id))}><Download size={16} />TXT</Button>
+        <Button variant="secondary" onClick={() => { try { printPdf(transcription, segments, store.tItems(id)); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not open PDF.'); } }}><Download size={16} />PDF</Button>
         <button type="button" className="icon-button" aria-label={t('delete')} onClick={() => void deleteTranscription()}><Trash2 /></button>
       </div>
     </header>
@@ -223,7 +231,7 @@ export function TranscriptionDetailPage() {
       <div className="section-heading"><div><h2>{t('transcript')}</h2><p>Speaker labels and timestamps can be corrected below. Cloud Whisper does not automatically identify different speakers.</p></div></div>
       {mediaUrl && <div className="media-controls"><audio ref={player} controls src={mediaUrl} preload="metadata" /></div>}
       {segments.length ? <div className="transcript-view">
-        {segments.map((segment) => <article className="segment-row transcription-segment" key={segment.id}>
+        {segments.map((segment) => <article className="segment-row transcription-segment" id={`segment-${segment.id}`} key={segment.id}>
           <button type="button" className="timestamp-button" onClick={() => playFrom(segment.startMs)} aria-label={`Play at ${formatTimestamp(segment.startMs)}`}><Play size={13} />{formatTimestamp(segment.startMs)}</button>
           <div className="segment-content">
             {editing === segment.id ? <>
@@ -243,5 +251,6 @@ export function TranscriptionDetailPage() {
         </article>)}
       </div> : <EmptyState title="No transcript segments yet" body={transcription.status === 'ready' ? 'No speech was found.' : 'Your transcript will appear after processing.'} />}
     </Card>
+    {segments.length > 0 && <MeetingFollowups transcription={transcription} />}
   </div>;
 }

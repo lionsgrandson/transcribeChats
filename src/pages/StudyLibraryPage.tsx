@@ -1,3 +1,4 @@
+import { cloudTranscription, hostedRuntime } from '../services/runtime';
 import { BookOpen, BrainCircuit, CheckCircle2, ExternalLink, FileText, FolderTree, RefreshCw, Search, Sparkles, UploadCloud, Video, Youtube } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { InteractiveQuestionSet, TopicLearningLinks } from '../components/StudyCourseTools';
@@ -160,7 +161,9 @@ export function StudyLibraryPage() {
         setProgress(70); setStage('Building full interactive course with Ollama');
       }
 
-      const analysis = await analyzeStudyWithOllama(settings.workerUrl, { title: resolvedTitle, transcript, context });
+      const analysis = hostedRuntime || cloudTranscription
+        ? parseStudyChatGptResult(JSON.stringify({ title: resolvedTitle, overview: 'Source saved. Use ChatGPT review and import to build the complete course.', topics: [], flashcards: [], quiz: [], test: [], tasks: [] }))
+        : await analyzeStudyWithOllama(settings.workerUrl, { title: resolvedTitle, transcript, context });
       const now = new Date().toISOString();
       const manualPath = parsePath(pathText);
       const entry: StudyEntry = {
@@ -179,7 +182,7 @@ export function StudyLibraryPage() {
       await db.studyEntries.add(entry);
       await reload();
       setSelectedId(entry.id);
-      setTab('learn');
+      setTab(hostedRuntime || cloudTranscription ? 'chatgpt' : 'learn');
       setProgress(100); setStage('Ready');
       showToast('Full interactive learning course created and indexed locally.');
       setFile(undefined); setYoutubeUrl(''); setText(''); setTitle(''); setPathText('');
@@ -312,7 +315,7 @@ export function StudyLibraryPage() {
       try {
         analysis = parseStudyChatGptResult(rawOutput);
       } catch {
-        if (workerReady === false) throw new Error('The ChatGPT response was saved, but the local worker is offline so it could not be repaired into the structured study tabs.');
+        if (hostedRuntime || cloudTranscription || workerReady === false) throw new Error('The ChatGPT response was saved, but the local worker is offline so it could not be repaired into the structured study tabs.');
         setChatImportStage('Formatting response locally with Ollama');
         analysis = await repairStudyChatGptResult(settings.workerUrl, { title: selected.title, response: rawOutput });
         repairedLocally = true;
@@ -387,11 +390,11 @@ export function StudyLibraryPage() {
 
       <section className="learning-main">
         <Card className="learning-create-card">
-          <div className="learning-card-title"><Sparkles /><div><strong>Create a full learning course</strong><span>Ollama runs locally. The result teaches the transcript first, then builds flashcards, an interactive quiz, an interactive full test, practice, and review.</span></div></div>
+          <div className="learning-card-title"><Sparkles /><div><strong>Create a full learning course</strong><span>{hostedRuntime || cloudTranscription ? 'Save a source, then use ChatGPT review and import to build lessons, flashcards, quizzes and practice. YouTube downloading and local Ollama generation are available in the desktop application.' : 'Ollama runs locally to build lessons, flashcards, interactive quizzes and practice.'}</span></div></div>
           <div className="learning-source-tabs">
             <button className={sourceMode === 'existing' ? 'active' : ''} onClick={() => setSourceMode('existing')}><BookOpen size={16} />Existing transcript</button>
             <button className={sourceMode === 'upload' ? 'active' : ''} onClick={() => setSourceMode('upload')}><Video size={16} />Video / audio</button>
-            <button className={sourceMode === 'youtube' ? 'active' : ''} onClick={() => setSourceMode('youtube')}><Youtube size={16} />YouTube link</button>
+            <button className={sourceMode === 'youtube' ? 'active' : ''} disabled={hostedRuntime || cloudTranscription} title={hostedRuntime || cloudTranscription ? 'Use the desktop application to download YouTube captions, or paste them here.' : undefined} onClick={() => setSourceMode('youtube')}><Youtube size={16} />YouTube link</button>
             <button className={sourceMode === 'text' ? 'active' : ''} onClick={() => setSourceMode('text')}><FileText size={16} />Paste text</button>
           </div>
           <div className="form-grid two-columns">
@@ -420,7 +423,7 @@ export function StudyLibraryPage() {
               <div className="mastery-summary"><span><strong>{masteryPercent(selected)}%</strong> mastered</span><progress max="100" value={masteryPercent(selected)} /></div>
             </div>
             <div className="learning-result-actions">
-              <Button variant="secondary" busy={busy} onClick={() => void rebuildFullCourse()}><RefreshCw size={16} />Rebuild full course</Button>
+              <Button variant="secondary" busy={busy} disabled={hostedRuntime || cloudTranscription} onClick={() => void rebuildFullCourse()}><RefreshCw size={16} />Rebuild full course</Button>
               <Button variant="secondary" onClick={() => void improveWithChatGpt()}><ExternalLink size={16} />Second pass with ChatGPT</Button>
               <Button variant="secondary" onClick={() => { setChatImportOpen(true); setChatImportError(undefined); setChatImportStage(''); }}>Paste ChatGPT result</Button>
               <Button variant="ghost" onClick={() => void removeSelected()}>Delete</Button>

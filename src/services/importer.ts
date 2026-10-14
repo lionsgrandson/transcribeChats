@@ -72,8 +72,8 @@ export function previewImport(
     const duplicate = existing.some((item) =>
       item.kind === normalized.kind && item.title.trim().toLowerCase() === normalized.title.trim().toLowerCase()
     );
-    if (duplicate) duplicates.push(normalized.title);
-    valid.push(normalized);
+    if (duplicate || valid.some((item) => item.kind === normalized.kind && item.title.trim().toLowerCase() === normalized.title.trim().toLowerCase())) duplicates.push(normalized.title);
+    else valid.push(normalized);
   });
   return { valid, invalid, duplicates };
 }

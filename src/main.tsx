@@ -2,12 +2,13 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { registerSW } from 'virtual:pwa-register';
-import App from './App';
+import { WorkspaceRoot } from './components/WorkspaceRoot';
 import { AppErrorBoundary } from './components/AppErrorBoundary';
-import { AppStoreProvider } from './state/AppStore';
 import './styles.css';
 import './learning.css';
 import './study-progress.css';
+import './study-interactive.css';
+import './unified.css';
 
 if (import.meta.env.DEV) {
   if ('serviceWorker' in navigator) {
@@ -22,6 +23,6 @@ if (import.meta.env.DEV) {
 
 createRoot(document.getElementById('root')!).render(
   <AppErrorBoundary>
-    <StrictMode><BrowserRouter><AppStoreProvider><App /></AppStoreProvider></BrowserRouter></StrictMode>
+    <StrictMode><BrowserRouter><WorkspaceRoot /></BrowserRouter></StrictMode>
   </AppErrorBoundary>
 );

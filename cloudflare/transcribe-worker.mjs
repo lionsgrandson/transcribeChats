@@ -70,9 +70,10 @@ function normaliseSegments(result) {
 export default {
   async fetch(request, env) {
     const origin = request.headers.get('Origin');
-    const allowed = env.ALLOWED_ORIGIN;
+    const allowed = env.ENABLE_LOCAL_ORIGIN === 'true' && ['http://localhost:4173', 'http://127.0.0.1:4173', 'http://localhost:4174'].includes(origin)
+      ? origin : env.ALLOWED_ORIGIN;
     // Fail closed until a single trusted frontend origin is configured.
-    if (!allowed || !/^https:\/\//.test(allowed)) return json({ error: 'Frontend origin is not configured.' }, 503);
+    if (!env.ALLOWED_ORIGIN || !/^https:\/\//.test(env.ALLOWED_ORIGIN)) return json({ error: 'Frontend origin is not configured.' }, 503);
     const cors = corsHeaders(origin, allowed);
     if (origin && origin !== allowed) return json({ error: 'Origin not allowed.' }, 403);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });

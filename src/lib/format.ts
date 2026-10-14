@@ -1,5 +1,11 @@
 import { format, formatDistanceToNow } from 'date-fns';
 
+export function dateTimeInputValue(value?: string): string {
+  if (!value || !Number.isFinite(new Date(value).getTime())) return '';
+  const date = new Date(value);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
 export function formatDuration(ms?: number): string {
   if (!ms) return '—';
   const totalSeconds = Math.floor(ms / 1000);

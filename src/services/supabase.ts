@@ -14,9 +14,9 @@ export async function currentUser(): Promise<User | null> {
   return data.user;
 }
 
-export async function sendMagicLink(email: string): Promise<void> {
+export async function sendMagicLink(email: string, captchaToken?: string): Promise<void> {
   if (!supabase) throw new Error('Supabase is not configured.');
-  const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
+  const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin, ...(captchaToken ? { captchaToken } : {}) } });
   if (error) throw error;
 }
 

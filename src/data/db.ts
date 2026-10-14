@@ -1,4 +1,4 @@
-import Dexie, { type EntityTable } from 'dexie';
+import Dexie, { type EntityTable, type Table } from 'dexie';
 import type {
   AppSettings,
   ExtractedItem,
@@ -18,9 +18,11 @@ export class TranscribeChatsDatabase extends Dexie {
   settings!: EntityTable<AppSettings, 'id'>;
   studyEntries!: EntityTable<StudyEntry, 'id'>;
   socialAudits!: EntityTable<SocialAuditEntry, 'id'>;
+  syncBackups!: EntityTable<{ id: string; createdAt: string; payload: unknown }, 'id'>;
+  remoteMedia!: EntityTable<Omit<LocalMediaAsset, 'blob'> & { storagePath: string }, 'id'>;
 
-  constructor() {
-    super('transcribeChats');
+  constructor(name = 'transcribeChats') {
+    super(name);
     this.version(1).stores({
       transcriptions: 'id, status, sourceType, recordedAt, updatedAt',
       segments: 'id, transcriptionId, [transcriptionId+sequenceNo]',
@@ -39,10 +41,41 @@ export class TranscribeChatsDatabase extends Dexie {
       studyEntries: 'id, title, updatedAt, *path',
       socialAudits: 'id, title, updatedAt'
     });
+    this.version(3).stores({ syncBackups: 'id, createdAt', remoteMedia: 'id, transcriptionId' });
   }
 }
 
-export const db = new TranscribeChatsDatabase();
+export let db = new TranscribeChatsDatabase();
+
+// Called once before mounting the store. Account changes reload the application.
+export function configureAccountDatabase(userId: string): void {
+  db.close();
+  db = new TranscribeChatsDatabase(`transcribeChats:user:${userId}`);
+}
+
+/** Explicit, additive recovery: never delete or automatically assign legacy data. */
+export async function recoverLegacyBrowserData(): Promise<number> {
+  if (db.name === 'transcribeChats') return 0;
+  const legacy = new TranscribeChatsDatabase();
+  try {
+    const [transcriptions, segments, items, notes, media, studies, audits] = await Promise.all([
+      legacy.transcriptions.toArray(), legacy.segments.toArray(), legacy.items.toArray(),
+      legacy.notes.toArray(), legacy.media.toArray(), legacy.studyEntries.toArray(), legacy.socialAudits.toArray()
+    ]);
+    const tables = [db.transcriptions, db.segments, db.items, db.notes, db.media, db.studyEntries, db.socialAudits];
+    await db.transaction('rw', tables, async () => {
+      // Existing account records win. Settings/CRM credentials are never imported.
+      for (const [index, records] of [transcriptions, segments, items, notes, media, studies, audits].entries()) {
+        const table = tables[index] as Table<{ id: string }, string>;
+        const existing = new Set(await table.toCollection().primaryKeys());
+        const missing = records.filter((record) => !existing.has(record.id));
+        // Dexie's heterogeneous tables share the id contract; each array stays paired with its table.
+        if (missing.length) await table.bulkPut(missing);
+      }
+    });
+    return transcriptions.length;
+  } finally { legacy.close(); }
+}
 
 export const defaultSettings: AppSettings = {
   id: 'settings',

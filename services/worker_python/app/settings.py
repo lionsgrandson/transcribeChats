@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     pyannote_metrics_enabled: bool = False
 
     gemini_api_key: str | None = None
-    gemini_model: str = "gemini-3.8-flash"
+    gemini_model: str = "gemini-3.5-flash-lite"
 
     ollama_url: str | None = None
     # start-all.mjs can automatically choose a larger model on machines with
