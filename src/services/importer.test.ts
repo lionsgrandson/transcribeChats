@@ -36,6 +36,28 @@ describe('previewImport', () => {
     expect(result.valid[2].startsAt).toContain('2026-07-18');
   });
 
+  it('imports a top-level detailed analysis as one note', () => {
+    const result = previewImport(JSON.stringify({
+      summary: 'Executive summary\n\nRequirements\n- Detailed requirement discussion.',
+      items: [{ kind: 'task', title: 'Send the complete requirements list', sourceSegmentIds: ['s1'] }]
+    }), []);
+    expect(result.invalid).toEqual([]);
+    expect(result.valid).toHaveLength(2);
+    expect(result.valid[0]).toMatchObject({ kind: 'note', title: 'Detailed meeting analysis' });
+    expect(result.valid[0].body).toContain('Executive summary');
+  });
+
+  it('merges differently worded versions of the same sourced task', () => {
+    const result = previewImport(JSON.stringify({ items: [
+      { kind: 'task', title: 'Send the complete requirements list', body: 'Send the complete requirements list to the development team.', sourceSegmentIds: ['s1', 's2'] },
+      { kind: 'task', title: 'Send requirements list to development', body: 'The full requirements list should be sent to the development team.', sourceSegmentIds: ['s2', 's3'] }
+    ] }), []);
+    expect(result.invalid).toEqual([]);
+    expect(result.valid).toHaveLength(1);
+    expect(result.duplicates).toHaveLength(1);
+    expect(result.valid[0].sourceSegmentIds).toEqual(expect.arrayContaining(['s1', 's2', 's3']));
+  });
+
   it('turns imported summary items into visible notes', () => {
     const result = previewImport('{"items":[{"kind":"summary","title":"Confirmed family schedule"}]}', []);
     expect(result.invalid).toEqual([]);
