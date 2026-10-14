@@ -6,7 +6,7 @@ import { formatTimestamp } from '../lib/format';
 import { previewImport } from '../services/importer';
 import { Button, Field, Modal } from './ui';
 
-export function ChatGptModal({ open, onClose, transcription, segments, items, onImport }: { open: boolean; onClose: () => void; transcription: Transcription; segments: TranscriptSegment[]; items: ExtractedItem[]; onImport: (values: ReturnType<typeof previewImport>['valid']) => Promise<void> }) {
+export function ChatGptModal({ open, onClose, transcription, segments, items, onImport }: { open: boolean; onClose: () => void; transcription: Transcription; segments: TranscriptSegment[]; items: ExtractedItem[]; onImport: (values: ReturnType<typeof previewImport>['valid'], summary?: string) => Promise<void> }) {
   const { t } = useTranslation();
   const [view, setView] = useState<'send' | 'import'>('send');
   const [withPrompt, setWithPrompt] = useState(true);
@@ -47,9 +47,9 @@ ITEM RULES:
     window.open('https://chatgpt.com/', '_blank', 'noopener,noreferrer');
   };
   const commit = async () => {
-    if (!preview?.valid.length) return;
+    if (!preview || (!preview.valid.length && !preview.summary)) return;
     setBusy(true);
-    try { await onImport(preview.valid); onClose(); }
+    try { await onImport(preview.valid, preview.summary); onClose(); }
     finally { setBusy(false); }
   };
   return <Modal open={open} onClose={onClose} title={t('chatGptTitle')} wide>
@@ -65,12 +65,13 @@ ITEM RULES:
       <Field label={t('pasteJson')}><textarea className="payload-preview" value={raw} onChange={(event) => { setRaw(event.target.value); setPreview(undefined); }} placeholder={'```json\n{"items": [...]}\n```'} dir="auto" /></Field>
       <Button variant="secondary" onClick={() => setPreview(previewImport(raw, items))}>{t('previewImport')}</Button>
       {preview && <div className="import-preview">
-        <div className="import-counts"><span className="status-badge status-ready">{preview.valid.length} valid</span><span className="status-badge status-failed">{preview.invalid.length} invalid</span><span className="status-badge status-needs-review">{preview.duplicates.length} duplicates</span></div>
+        <div className="import-counts"><span className="status-badge status-ready">{preview.valid.length} valid</span><span className="status-badge status-failed">{preview.invalid.length} invalid</span><span className="status-badge status-needs-review">{preview.duplicates.length} duplicates</span>{preview.summary && <span className="status-badge status-ready">analysis included</span>}</div>
+        {preview.summary && <div className="import-row"><div><strong>{transcription.languageMode === 'he' ? 'סיכום וניתוח מפורט' : 'Detailed summary & analysis'}</strong><p dir="auto" style={{ whiteSpace: 'pre-wrap' }}>{preview.summary}</p></div></div>}
         {preview.valid.map((item, index) => <div className="import-row" key={`${item.title}-${index}`}><span className={`kind-dot kind-${item.kind}`} /><div><strong dir="auto">{item.title}</strong><span>{item.kind} · {item.priority}</span></div></div>)}
         {preview.invalid.map((value) => <div className="inline-error" key={value}>{value}</div>)}
         {preview.duplicates.map((value) => <div className="inline-warning" key={value}>{t('duplicateItems')}: {value}</div>)}
       </div>}
-      <div className="form-actions"><Button variant="ghost" onClick={onClose}>{t('cancel')}</Button><Button busy={busy} disabled={!preview?.valid.length} onClick={() => void commit()}>{t('importSelected')}</Button></div>
+      <div className="form-actions"><Button variant="ghost" onClick={onClose}>{t('cancel')}</Button><Button busy={busy} disabled={!preview || (!preview.valid.length && !preview.summary)} onClick={() => void commit()}>{t('importSelected')}</Button></div>
     </div>}
   </Modal>;
 }
