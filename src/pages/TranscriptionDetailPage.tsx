@@ -241,7 +241,7 @@ END UNTRUSTED TRANSCRIPT`;
     </Card>}
     {segments.length > 0 && <p className="muted" role="note">{store.settings.locale === 'he' ? 'סיכום Gemini שולח את תוכן התמלול לעיבוד בענן רק בלחיצה. פתיחה ב-ChatGPT מעתיקה את התמלול ללוח ואינה שולחת אותו אוטומטית.' : 'Gemini sends transcript text to Google only when requested. ChatGPT export copies text to your clipboard; paste it yourself.'}</p>}
     {transcription.summary && <Card className="summary-view transcription-summary-card">
-      <h2>{t('summary')}</h2><p dir="auto">{transcription.summary}</p>
+      <h2>{store.settings.locale === 'he' ? 'סיכום וניתוח' : 'Summary & analysis'}</h2><p dir="auto">{transcription.summary}</p>
     </Card>}
     <Card className="transcription-segments-card">
       <div className="section-heading"><div><h2>{t('transcript')}</h2><p>Speaker labels and timestamps can be corrected below. Cloud Whisper does not automatically identify different speakers.</p></div></div>
